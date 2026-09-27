@@ -1,0 +1,26 @@
+[
+  {
+    "name": "portuguese-sme-with-unconfirmed-cofunding",
+    "title": "Programa fictício de I&D para mobilidade verde",
+    "query": "pequena e média empresa portuguesa mobilidade verde cofinanciamento prazo",
+    "expected_fit_band": "possível",
+    "expected_matching_funds_status": "não confirmado",
+    "expected_evidence_phrases": [
+      "pequenas e médias empresas estabelecidas em Portugal",
+      "30% do orçamento",
+      "30 de junho de 2027"
+    ]
+  },
+  {
+    "name": "separate-fit-from-eligibility",
+    "title": "Programa fictício de I&D para mobilidade verde",
+    "query": "empresa sediada em Braga projeto de investigação fundos próprios",
+    "expected_fit_band": "possível",
+    "expected_matching_funds_status": "não confirmado",
+    "expected_evidence_phrases": [
+      "sediada em Braga",
+      "investigação e desenvolvimento",
+      "fundos próprios ou privados"
+    ]
+  }
+]
