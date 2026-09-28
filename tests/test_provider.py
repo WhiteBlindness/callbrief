@@ -106,9 +106,7 @@ class ProviderTests(unittest.TestCase):
             FakeResponse(tool_response()),
         ],
     )
-    def test_retries_one_rate_limit_then_succeeds(
-        self, urlopen: object, sleep: object
-    ) -> None:
+    def test_retries_one_rate_limit_then_succeeds(self, urlopen: object, sleep: object) -> None:
         client = OpenAICompatibleClient(self.settings, max_retries=1)
 
         reply = client.complete([], [])

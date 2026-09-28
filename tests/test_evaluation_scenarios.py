@@ -8,7 +8,6 @@ from callbrief.agent import AgentRunner
 from callbrief.corpus import Corpus
 from callbrief.provider import ModelReply, ToolCall
 
-
 ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -79,9 +78,7 @@ class ScenarioClient:
             "next_steps": ["Confirm the funding plan with the applicant."],
         }
         return ModelReply(
-            tool_calls=(
-                ToolCall(call_id="eval-submit", name="submit_brief", arguments=brief),
-            )
+            tool_calls=(ToolCall(call_id="eval-submit", name="submit_brief", arguments=brief),)
         )
 
 

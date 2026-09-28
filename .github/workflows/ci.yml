@@ -19,9 +19,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install package
-        run: python -m pip install --no-deps .
+      - name: Install package and development tools
+        run: python -m pip install ".[dev,pdf]"
       - name: Run unit tests and offline evaluations
         run: python -m unittest discover -s tests -v
+      - name: Check formatting
+        run: python -m ruff format --check src tests
+      - name: Lint
+        run: python -m ruff check src tests
+      - name: Type check
+        run: python -m mypy src
       - name: Compile package
         run: python -m compileall -q src tests

@@ -64,8 +64,7 @@ class SettingsTests(unittest.TestCase):
             root = Path(temporary)
             target = root / "target.env"
             target.write_text(
-                "CALLBRIEF_BASE_URL=https://provider.example/v1\n"
-                "CALLBRIEF_MODEL=model\n",
+                "CALLBRIEF_BASE_URL=https://provider.example/v1\nCALLBRIEF_MODEL=model\n",
                 encoding="utf-8",
             )
             env_file = root / ".env"

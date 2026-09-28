@@ -64,7 +64,11 @@ class OpenAICompatibleClient:
         )
         logger.info(
             "model_request",
-            extra={"event": "model_request", "route": self.route_name, "model": self.settings.model},
+            extra={
+                "event": "model_request",
+                "route": self.route_name,
+                "model": self.settings.model,
+            },
         )
         for attempt in range(self.max_retries + 1):
             try:
@@ -82,20 +86,30 @@ class OpenAICompatibleClient:
             except HTTPError as exc:
                 retryable = exc.code == 429 or 500 <= exc.code <= 599
                 if retryable and attempt < self.max_retries:
-                    logger.warning("model_retry", extra={"event": "model_retry", "status": exc.code})
+                    logger.warning(
+                        "model_retry", extra={"event": "model_retry", "status": exc.code}
+                    )
                     time.sleep(min(2**attempt, 4))
                     continue
                 logger.error("model_http_error", extra={"event": "model_error", "status": exc.code})
                 raise ProviderError(f"Model endpoint returned HTTP {exc.code}") from None
             except (URLError, TimeoutError, OSError) as exc:
                 if attempt < self.max_retries:
-                    logger.warning("model_retry", extra={"event": "model_retry", "reason": type(exc).__name__})
+                    logger.warning(
+                        "model_retry", extra={"event": "model_retry", "reason": type(exc).__name__}
+                    )
                     time.sleep(min(2**attempt, 4))
                     continue
-                logger.error("model_connection_error", extra={"event": "model_error", "reason": type(exc).__name__})
+                logger.error(
+                    "model_connection_error",
+                    extra={"event": "model_error", "reason": type(exc).__name__},
+                )
                 raise ProviderError("Could not connect to the configured model endpoint") from None
             except (UnicodeDecodeError, ValueError, TypeError, KeyError, IndexError) as exc:
-                logger.error("model_invalid_response", extra={"event": "model_error", "reason": type(exc).__name__})
+                logger.error(
+                    "model_invalid_response",
+                    extra={"event": "model_error", "reason": type(exc).__name__},
+                )
                 raise ProviderError("Model endpoint returned a malformed response") from None
         raise ProviderError("Model request failed")
 

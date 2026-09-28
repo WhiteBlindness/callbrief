@@ -44,7 +44,9 @@ class Settings:
             if path.is_symlink() or not path.is_file():
                 raise SettingsError("Configuration file must not be a symlink")
             try:
-                for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                for line_number, line in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), start=1
+                ):
                     stripped = line.strip()
                     if not stripped or stripped.startswith("#"):
                         continue
@@ -77,7 +79,9 @@ class Settings:
         if parsed_url.scheme not in {"http", "https"} or not parsed_url.hostname:
             raise SettingsError("CALLBRIEF_BASE_URL must be an HTTP(S) URL")
         if parsed_url.username or parsed_url.password or parsed_url.query or parsed_url.fragment:
-            raise SettingsError("CALLBRIEF_BASE_URL must not contain credentials, a query or a fragment")
+            raise SettingsError(
+                "CALLBRIEF_BASE_URL must not contain credentials, a query or a fragment"
+            )
         local_hosts = {"localhost", "127.0.0.1", "::1"}
         if parsed_url.scheme == "http" and parsed_url.hostname.casefold() not in local_hosts:
             raise SettingsError("Plain HTTP is allowed only for a loopback model server")

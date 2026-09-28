@@ -70,12 +70,21 @@ CallBrief limita o corpus a 250 ficheiros, 5 MiB por ficheiro e dois milhões de
 
 ## Testes e avaliação
 
+Para executar todas as verificações, instala as ferramentas de desenvolvimento e o suporte opcional a PDF:
+
+```bash
+python -m pip install -e ".[dev,pdf]"
+```
+
 ```bash
 python -m unittest discover -s tests -v
+python -m ruff format --check src tests
+python -m ruff check src tests
+python -m mypy src
 python -m compileall -q src tests
 ```
 
-Os testes cobrem pesquisa e ordenação, validação de configuração, chamadas estruturadas ao modelo, repetição limitada após HTTP 429, lista de ferramentas permitidas, citações, escrita segura do relatório e dois cenários offline. A matriz de CI executa os testes em Python 3.12, 3.13 e 3.14.
+A bateria cobre pesquisa e ordenação, validação de configuração, chamadas estruturadas ao modelo, repetição limitada após HTTP 429, lista de ferramentas permitidas, citações, escrita segura do relatório e dois cenários offline sem chamadas pagas. O CI executa os testes em Python 3.12, 3.13 e 3.14 e valida a formatação, a lintagem, os tipos e a compilação.
 
 ## Limites atuais
 

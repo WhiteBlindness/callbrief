@@ -22,7 +22,11 @@ def render_markdown(brief: Brief, evidence_map: dict[str, tuple[str, str, str]])
     lines = [
         f"# {brief.title}",
         "",
-        "> Avaliação preliminar para apoiar uma decisão interna. Confirme os critérios, prazos e condições no aviso oficial; este relatório não é aconselhamento jurídico ou financeiro.",
+        (
+            "> Avaliação preliminar para apoiar uma decisão interna. Confirme os critérios, prazos "
+            "e condições no aviso oficial; este relatório não é aconselhamento "
+            "jurídico ou financeiro."
+        ),
         "",
         "## Síntese",
         "",
@@ -38,16 +42,27 @@ def render_markdown(brief: Brief, evidence_map: dict[str, tuple[str, str, str]])
     if brief.requirements:
         for requirement in brief.requirements:
             citations = ", ".join(f"`{item}`" for item in requirement.evidence_ids)
-            lines.append(f"- **{requirement.status.value}: {requirement.requirement}.** {requirement.note} ({citations})")
+            lines.append(
+                f"- **{requirement.status.value}: {requirement.requirement}.** "
+                f"{requirement.note} ({citations})"
+            )
     else:
         lines.append("- Não foram identificados requisitos com evidência suficiente.")
     lines.extend(["", "## Prazos", ""])
-    lines.extend(f"- {_render_claim(item)}" for item in brief.deadlines) if brief.deadlines else lines.append("- Não foi identificado um prazo nos excertos consultados.")
+    lines.extend(
+        f"- {_render_claim(item)}" for item in brief.deadlines
+    ) if brief.deadlines else lines.append(
+        "- Não foi identificado um prazo nos excertos consultados."
+    )
     lines.extend(["", "## Riscos e dúvidas", ""])
-    lines.extend(f"- {_render_claim(item)}" for item in brief.risks) if brief.risks else lines.append("- Não foram assinalados riscos documentais.")
+    lines.extend(
+        f"- {_render_claim(item)}" for item in brief.risks
+    ) if brief.risks else lines.append("- Não foram assinalados riscos documentais.")
     lines.extend(f"- Questão: {item}" for item in brief.open_questions)
     lines.extend(["", "## Próximos passos", ""])
-    lines.extend(f"- {item}" for item in brief.next_steps) if brief.next_steps else lines.append("- Rever os pontos não confirmados com a equipa responsável.")
+    lines.extend(f"- {item}" for item in brief.next_steps) if brief.next_steps else lines.append(
+        "- Rever os pontos não confirmados com a equipa responsável."
+    )
     lines.extend(["", "## Evidência consultada", ""])
     for evidence_id, (source, location, excerpt) in evidence_map.items():
         safe_excerpt = " ".join(excerpt.split())

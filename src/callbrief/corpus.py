@@ -18,7 +18,11 @@ MAX_CORPUS_FILES = 250
 MAX_CORPUS_CHARACTERS = 2_000_000
 _TOKEN = re.compile(r"[\w]+", re.UNICODE)
 _STOP_WORDS = frozenset(
-    "a ao aos as com da das de do dos e em entre for from i na nas no nos o os ou para por que se the um uma uns umas is of and or to this that may can do does applicant applicants entidade empresa empresas apoio aviso candidatura candidaturas".split()
+    """
+    a ao aos as com da das de do dos e em entre for from i na nas no nos o os ou para por que se
+    the um uma uns umas is of and or to this that may can do does applicant applicants entidade
+    empresa empresas apoio aviso candidatura candidaturas
+    """.split()
 )
 
 
@@ -76,7 +80,9 @@ def _read_pdf(path: Path) -> str:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
-        raise CorpusError("PDF support requires the optional 'pdf' extra: pip install callbrief[pdf]") from exc
+        raise CorpusError(
+            "PDF support requires the optional 'pdf' extra: pip install callbrief[pdf]"
+        ) from exc
     try:
         return "\n\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
     except Exception as exc:
@@ -96,7 +102,10 @@ class Corpus:
         for candidate in path.rglob("*"):
             if candidate.is_symlink():
                 continue
-            if any(part in IGNORED_DIRECTORIES or part.startswith(".") for part in candidate.relative_to(path).parts[:-1]):
+            if any(
+                part in IGNORED_DIRECTORIES or part.startswith(".")
+                for part in candidate.relative_to(path).parts[:-1]
+            ):
                 continue
             if candidate.is_file() and candidate.suffix.casefold() in SUPPORTED_SUFFIXES:
                 selected.append(candidate)
@@ -112,7 +121,11 @@ class Corpus:
             if source_path.stat().st_size > MAX_FILE_BYTES:
                 raise CorpusError(f"File exceeds the 5 MiB limit: {source_path.name}")
             try:
-                text = _read_pdf(source_path) if source_path.suffix.casefold() == ".pdf" else source_path.read_text(encoding="utf-8")
+                text = (
+                    _read_pdf(source_path)
+                    if source_path.suffix.casefold() == ".pdf"
+                    else source_path.read_text(encoding="utf-8")
+                )
             except UnicodeDecodeError as exc:
                 raise CorpusError(f"File is not valid UTF-8 text: {source_path.name}") from exc
             relative = source_path.relative_to(path).as_posix()
@@ -130,7 +143,11 @@ class Corpus:
     def search(self, query: str, max_results: int = 6) -> tuple[Evidence, ...]:
         if not isinstance(query, str) or not query.strip() or len(query) > 500:
             raise CorpusError("Search query must contain between 1 and 500 characters")
-        if not isinstance(max_results, int) or isinstance(max_results, bool) or not 1 <= max_results <= 12:
+        if (
+            not isinstance(max_results, int)
+            or isinstance(max_results, bool)
+            or not 1 <= max_results <= 12
+        ):
             raise CorpusError("max_results must be between 1 and 12")
         terms = tuple(term for term in _normalise(query).split() if term not in _STOP_WORDS)
         if not terms:
@@ -153,7 +170,11 @@ class Corpus:
             for term in set(terms):
                 frequency = frequencies.get(term, 0)
                 if frequency:
-                    inverse_frequency = math.log(1 + (total - document_frequency[term] + 0.5) / (document_frequency[term] + 0.5))
+                    inverse_frequency = math.log(
+                        1
+                        + (total - document_frequency[term] + 0.5)
+                        / (document_frequency[term] + 0.5)
+                    )
                     score += inverse_frequency * (frequency * 2.2) / (frequency + 1.2)
             if score:
                 rows.append((score, document.source, line, paragraph))
@@ -161,7 +182,7 @@ class Corpus:
 
         results: list[Evidence] = []
         for _, source, line, paragraph in rows[:max_results]:
-            digest = hashlib.sha256(f"{source}\0{line}\0{paragraph}".encode("utf-8")).hexdigest()[:12]
+            digest = hashlib.sha256(f"{source}\0{line}\0{paragraph}".encode()).hexdigest()[:12]
             excerpt = paragraph[:1200]
             results.append(
                 Evidence(
