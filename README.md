@@ -1,80 +1,83 @@
 # CallBrief
 
-**Avaliações preliminares, com fontes, de avisos de financiamento de investigação e desenvolvimento.**
+**Evidence-cited screening of R&D funding calls.**
 
-CallBrief pesquisa documentos locais de um aviso e de uma entidade, e produz um resumo estruturado da adequação, dos requisitos, dos prazos e das dúvidas em aberto. Cada afirmação factual aponta para excertos que o utilizador pode confirmar.
+CallBrief searches local documents for a funding call and an applicant profile, then produces a structured summary of fit, requirements, deadlines, and open questions. Each factual finding points to source excerpts for review.
 
-**Estado:** protótipo funcional, com pesquisa local e avaliação por modelo. Não substitui a leitura do aviso oficial nem uma decisão jurídica ou financeira.
+**Status:** Functional prototype with local search and model-assisted evaluation. It does not replace the official call text or a legal or funding decision.
 
-## Porque existe
+## Why it exists
 
-Equipas de inovação e consultoria analisam avisos extensos e comparam critérios com informação dispersa sobre uma entidade. CallBrief torna essa primeira leitura mais rápida e rastreável: separa o que os documentos confirmam daquilo que ainda exige validação humana.
+Innovation teams and consultants often compare long funding calls with information spread across several applicant documents. CallBrief makes the first review faster and easier to check. It separates what the documents support from what still needs human review.
 
-## Como funciona
+## How it works
 
 ```mermaid
 flowchart LR
-    A[Perfil e documentos do aviso] --> B[Carregamento local e validação]
-    B --> C[Pesquisa lexical determinística]
-    C --> D[Orquestrador com ferramentas limitadas]
+    A[Applicant profile and call documents] --> B[Local loading and validation]
+    B --> C[Deterministic lexical search]
+    C --> D[Tool-limited orchestrator]
     D -->|search_documents| C
-    D -->|submit_brief| E[Validação de estrutura e citações]
-    E --> F[Relatório Markdown com fontes]
-    D -. endpoint remoto apenas com autorização explícita .-> G[API compatível com chat-completions]
+    D -->|submit_brief| E[Schema and citation validation]
+    E --> F[Markdown report with sources]
+    D -. Remote endpoint requires explicit approval .-> G[Chat-completions compatible API]
 ```
 
-O fluxo mantém o carregamento e a pesquisa no processo local. O modelo só recebe os excertos devolvidos pela pesquisa. Por omissão, a configuração aponta para um servidor local compatível com a API de chat-completions. Um destino HTTPS exige a opção explícita `--allow-remote`.
+Documents are loaded and searched locally. The model receives only excerpts returned by search. By default, CallBrief uses a local server compatible with the chat-completions API. A remote HTTPS endpoint requires the explicit `--allow-remote` option.
 
-## Decisões de engenharia
+## Engineering decisions
 
-- **Pesquisa primeiro, resposta depois:** o modelo não recebe a pasta inteira e tem de pesquisar antes de apresentar conclusões.
-- **Ferramentas limitadas:** só pode pesquisar documentos e submeter a avaliação. Não pode executar comandos, aceder à rede ou alterar ficheiros.
-- **Citações verificadas:** cada referência na resposta tem de corresponder a evidência devolvida pela pesquisa.
-- **Controlo determinístico:** limites de ficheiros, tamanho, argumentos e número de turnos são aplicados pelo código, não pelo modelo.
-- **Sem chamadas pagas nos testes:** os testes e os cenários de avaliação usam clientes simulados.
-- **Tratamento de documentos como dados:** instruções encontradas nos documentos não são executadas. As mensagens de registo não incluem prompts, excertos nem credenciais.
-- **Sem sobreposição silenciosa:** o relatório existente só é substituído com `--force` e é escrito através de substituição atómica.
+- **Search before answering:** the model must retrieve evidence before it can submit findings.
+- **Limited tools:** it can search documents and submit a brief. It cannot run commands, access the network, or modify files.
+- **Checked citations:** every citation must match evidence returned by search.
+- **Deterministic controls:** code enforces file, size, argument, and turn limits.
+- **No paid API calls in tests:** tests and evaluation scenarios use fake model clients.
+- **Documents are data:** instructions inside a source document are never executed. Logs omit prompts, excerpts, and credentials.
+- **Safe report writes:** an existing report is replaced only with `--force`; new output uses an atomic file replacement.
 
-## Instalação rápida
+## Quick start
 
-Requer Python 3.12 ou superior. A execução básica não tem dependências externas.
+Requires Python 3.12 or later. The basic installation has no third-party runtime dependencies.
 
 ```bash
 python -m venv .venv
-# Linux ou macOS
+# Linux or macOS
 source .venv/bin/activate
-# Windows PowerShell: .venv\Scripts\Activate.ps1
+# Windows PowerShell
+.venv\Scripts\Activate.ps1
 python -m pip install -e .
 Copy-Item .env.example .env
 ```
 
-Define `CALLBRIEF_MODEL` no ficheiro `.env` e inicia um servidor de modelo local compatível. Depois:
+Set `CALLBRIEF_MODEL` in `.env` and start a local model server that supports the chat-completions API. Then run:
 
 ```bash
-callbrief assess --corpus examples/corpus --output avaliacao.md
+callbrief assess --corpus examples/corpus --output assessment.md
 ```
 
-Para usar um serviço remoto, configura `CALLBRIEF_BASE_URL`, `CALLBRIEF_MODEL` e, se necessário, `CALLBRIEF_API_KEY` no ambiente ou no ficheiro `.env`. Confirma que podes enviar os excertos e indica a autorização em cada execução:
+For a remote service, configure `CALLBRIEF_BASE_URL`, `CALLBRIEF_MODEL`, and, when needed, `CALLBRIEF_API_KEY` in the environment or `.env`. Confirm that you can send the excerpts, then pass the explicit approval flag:
 
 ```bash
-callbrief assess --corpus ./documentos --output avaliacao.md --allow-remote
+callbrief assess --corpus ./documents --output assessment.md --allow-remote
 ```
 
-Os formatos suportados são Markdown e texto UTF-8. Para extrair texto de PDFs, instala a dependência opcional `python -m pip install -e ".[pdf]"`. O processamento de PDFs é local.
+CallBrief supports Markdown and UTF-8 text files. To extract PDF text locally, install the optional dependency with `python -m pip install -e ".[pdf]"`.
 
-## Estrutura de documentos
+## Document limits
 
-Coloca o aviso e o perfil na pasta indicada por `--corpus`. Usa ficheiros separados para manter as fontes claras. O exemplo incluído é totalmente fictício e não representa um aviso real nem uma entidade real.
+Place the funding call and applicant profile in the directory passed to `--corpus`. The included example is fictional and does not represent a real call or applicant.
 
-CallBrief limita o corpus a 250 ficheiros, 5 MiB por ficheiro e dois milhões de caracteres. Ignora ficheiros fora dos formatos suportados e diretórios de ambiente ou controlo de versões.
+CallBrief accepts up to 250 files, limits each file to 5 MiB, and caps the corpus at two million characters. It ignores unsupported formats and environment or version-control directories.
 
-## Testes e avaliação
+## Tests and evaluation
 
-Para executar todas as verificações, instala as ferramentas de desenvolvimento e o suporte opcional a PDF:
+Install development tools and optional PDF support:
 
 ```bash
 python -m pip install -e ".[dev,pdf]"
 ```
+
+Run the checks:
 
 ```bash
 python -m unittest discover -s tests -v
@@ -84,11 +87,11 @@ python -m mypy src
 python -m compileall -q src tests
 ```
 
-A bateria cobre pesquisa e ordenação, validação de configuração, chamadas estruturadas ao modelo, repetição limitada após HTTP 429, lista de ferramentas permitidas, citações, escrita segura do relatório e dois cenários offline sem chamadas pagas. O CI executa os testes em Python 3.12, 3.13 e 3.14 e valida a formatação, a lintagem, os tipos e a compilação.
+The suite covers search and ranking, configuration validation, structured model calls, bounded retries after HTTP 429, tool allowlisting, citation checks, safe report writes, and two offline evaluations. GitHub Actions runs the same checks on Python 3.12, 3.13, and 3.14.
 
-## Limites atuais
+## Current limits
 
-- O resultado depende da qualidade dos documentos e do modelo configurado.
-- A pesquisa lexical é determinística, mas não entende conceitos que não partilhem vocabulário com os documentos; não usa uma base vetorial nem memória persistente.
-- O estado “cumpre” significa apenas que há evidência textual compatível. A interpretação oficial dos critérios continua a exigir revisão humana.
-- Não há interface gráfica nem serviço alojado. O projeto é uma ferramenta de linha de comandos.
+- Results depend on the source documents and configured model.
+- Lexical search is deterministic, but it cannot retrieve concepts that use different wording. The project has no vector database or persistent memory.
+- A “meets” finding means that the documents contain compatible evidence. A person must still interpret the official criteria.
+- CallBrief is a CLI, not a hosted service or graphical application.
