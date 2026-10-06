@@ -117,8 +117,7 @@ def score_fit(
             overall=None,
             components=components,
             explanation=(
-                "Não aplicável: falhou uma regra determinística de "
-                "elegibilidade obrigatória."
+                "Não aplicável: falhou uma regra determinística de elegibilidade obrigatória."
             ),
             assessed_at=timestamp,
         )
