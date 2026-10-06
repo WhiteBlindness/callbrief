@@ -376,8 +376,12 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                 evidence.append(reference)
 
     canonical_url: str | None = document.source_url
-    if canonical_url is None or "/search-api/" in canonical_url or not _has_evidence(
-        document, record, ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
+    if (
+        canonical_url is None
+        or "/search-api/" in canonical_url
+        or not _has_evidence(
+            document, record, ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
+        )
     ):
         canonical_url = None
     opportunity_id = hashlib.sha256(f"{document.source_id}\0{record_id}".encode()).hexdigest()[:24]

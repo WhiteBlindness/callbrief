@@ -83,15 +83,13 @@ def _rule_matches(rule: EligibilityRule, actual: Any) -> bool | None:
     if rule.operator is RuleOperator.INTERSECTS:
         intersection_actual_values = actual if isinstance(actual, (tuple, list)) else (actual,)
         intersection_expected_values = expected if isinstance(expected, tuple) else (expected,)
-        actual_strings = tuple(
-            item for item in intersection_actual_values if isinstance(item, str)
-        )
+        actual_strings = tuple(item for item in intersection_actual_values if isinstance(item, str))
         expected_strings = tuple(
             item for item in intersection_expected_values if isinstance(item, str)
         )
-        if len(actual_strings) != len(intersection_actual_values) or len(
-            expected_strings
-        ) != len(intersection_expected_values):
+        if len(actual_strings) != len(intersection_actual_values) or len(expected_strings) != len(
+            intersection_expected_values
+        ):
             return None
         return bool(
             {_normalise(item) for item in actual_strings}
