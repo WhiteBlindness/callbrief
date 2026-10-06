@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "callbrief"
-version = "0.1.0"
-description = "Avaliação preliminar, com fontes, de avisos de financiamento de I&D"
+version = "0.2.0"
+description = "Inteligência de oportunidades de financiamento para PME e consultoras"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
@@ -30,6 +30,9 @@ callbrief = "callbrief.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+callbrief = ["data/*.json", "migrations/*.sql"]
 
 [tool.ruff]
 line-length = 100
