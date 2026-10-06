@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from datetime import datetime
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 from .domain import EvidenceReference, OrganisationProfile
 
@@ -63,7 +63,7 @@ def apply_enrichment(
     facts: tuple[EnrichmentFact, ...],
 ) -> OrganisationProfile:
     """Fill unknown profile fields only and retain evidence for every accepted fact."""
-    changes: dict[str, object] = {}
+    changes: dict[str, Any] = {}
     evidence = {item.evidence_id: item for item in profile.evidence}
     for fact in facts:
         expected_types = _FIELD_TYPES.get(fact.profile_field)

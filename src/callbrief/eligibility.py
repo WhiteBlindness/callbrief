@@ -53,7 +53,7 @@ def _rule_matches(rule: EligibilityRule, actual: Any) -> bool | None:
     if rule.operator is RuleOperator.PRESENT:
         if actual is None:
             return None
-        return actual != "" and actual != ()
+        return bool(actual != "" and actual != ())
     if actual is None or expected is None:
         return None
     if rule.operator is RuleOperator.EQUALS:
@@ -67,24 +67,35 @@ def _rule_matches(rule: EligibilityRule, actual: Any) -> bool | None:
     if rule.operator is RuleOperator.IN:
         candidates = expected if isinstance(expected, tuple) else (expected,)
         if isinstance(actual, str):
-            if not all(isinstance(item, str) for item in candidates):
+            candidate_strings = tuple(item for item in candidates if isinstance(item, str))
+            if len(candidate_strings) != len(candidates):
                 return None
-            return _normalise(actual) in {_normalise(item) for item in candidates}
+            return _normalise(actual) in {_normalise(item) for item in candidate_strings}
         if isinstance(actual, tuple):
-            if not all(isinstance(item, str) for item in (*actual, *candidates)):
+            actual_strings = tuple(item for item in actual if isinstance(item, str))
+            candidate_strings = tuple(item for item in candidates if isinstance(item, str))
+            if len(actual_strings) != len(actual) or len(candidate_strings) != len(candidates):
                 return None
-            actual_values = {_normalise(item) for item in actual}
-            expected_values = {_normalise(item) for item in candidates}
-            return bool(actual_values & expected_values)
+            matched_actual_values = {_normalise(item) for item in actual_strings}
+            matched_candidate_values = {_normalise(item) for item in candidate_strings}
+            return bool(matched_actual_values & matched_candidate_values)
         return None
     if rule.operator is RuleOperator.INTERSECTS:
-        actual_values = actual if isinstance(actual, (tuple, list)) else (actual,)
-        expected_values = expected if isinstance(expected, tuple) else (expected,)
-        if not all(isinstance(item, str) for item in (*actual_values, *expected_values)):
+        intersection_actual_values = actual if isinstance(actual, (tuple, list)) else (actual,)
+        intersection_expected_values = expected if isinstance(expected, tuple) else (expected,)
+        actual_strings = tuple(
+            item for item in intersection_actual_values if isinstance(item, str)
+        )
+        expected_strings = tuple(
+            item for item in intersection_expected_values if isinstance(item, str)
+        )
+        if len(actual_strings) != len(intersection_actual_values) or len(
+            expected_strings
+        ) != len(intersection_expected_values):
             return None
         return bool(
-            {_normalise(item) for item in actual_values}
-            & {_normalise(item) for item in expected_values}
+            {_normalise(item) for item in actual_strings}
+            & {_normalise(item) for item in expected_strings}
         )
     left = _decimal(actual)
     right = _decimal(expected)
@@ -190,6 +201,7 @@ def assess_eligibility(
     timestamp = assessed_at or datetime.now(UTC)
     if timestamp.tzinfo is None:
         raise ValueError("assessed_at must include a timezone")
+    findings: tuple[EligibilityFinding, ...]
     if not opportunity.eligibility_rules:
         findings = (
             EligibilityFinding(

@@ -11,6 +11,7 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from .agent import AgentError, AgentRunner
 from .corpus import Corpus, CorpusError
@@ -285,7 +286,7 @@ def _manage_organisation(args: argparse.Namespace) -> int:
             id=args.organisation_id,
             workspace_id=args.workspace_id,
         )
-        changes: dict[str, object] = {}
+        changes: dict[str, Any] = {}
         for name in ("legal_name", "vat_number", "country", "company_size", "employees"):
             value = getattr(args, name)
             if value is not None:

@@ -375,8 +375,8 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             if reference is not None:
                 evidence.append(reference)
 
-    canonical_url = document.source_url
-    if "/search-api/" in canonical_url or not _has_evidence(
+    canonical_url: str | None = document.source_url
+    if canonical_url is None or "/search-api/" in canonical_url or not _has_evidence(
         document, record, ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
     ):
         canonical_url = None

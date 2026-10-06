@@ -87,7 +87,7 @@ def _pairs(values: Iterable[Sequence[str]]) -> set[tuple[str, str]]:
     for pair in values:
         if len(pair) != 2 or pair[0] == pair[1]:
             raise ValueError("duplicate pairs must contain two distinct identifiers")
-        result.add(tuple(sorted((pair[0], pair[1]))))
+        result.add((min(pair[0], pair[1]), max(pair[0], pair[1])))
     return result
 
 

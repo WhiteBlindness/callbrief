@@ -219,19 +219,19 @@ class Opportunity:
     duplicate_of: str | None = None
 
     def __post_init__(self) -> None:
-        for value, name in (
+        for required_value, required_name in (
             (self.id, "id"),
             (self.source_id, "source_id"),
             (self.source_record_id, "source_record_id"),
         ):
-            _required_text(value, name)
-        for value, name in (
+            _required_text(required_value, required_name)
+        for optional_value, optional_name in (
             (self.programme, "programme"),
             (self.title, "title"),
             (self.authority, "authority"),
         ):
-            if value is not None:
-                _required_text(value, name)
+            if optional_value is not None:
+                _required_text(optional_value, optional_name)
         if self.canonical_url is not None:
             _https_url(self.canonical_url, "canonical_url")
         if self.source_retrieved_at.tzinfo is None:
