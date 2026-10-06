@@ -57,9 +57,12 @@ class FitWeights:
 _SIGNAL_EXPLANATIONS = {
     "strategic_fit": "Pontuação de adequação estratégica fornecida na configuração da avaliação.",
     "probability_of_winning": (
-        "Não existe um modelo histórico validado nem uma estimativa revista que sustente esta pontuação."
+        "Não existe um modelo histórico validado nem uma estimativa "
+        "revista que sustente esta pontuação."
     ),
-    "funding_attractiveness": "Pontuação de atratividade do financiamento fornecida na configuração.",
+    "funding_attractiveness": (
+        "Pontuação de atratividade do financiamento fornecida na configuração."
+    ),
     "application_effort": "Pontuação de adequação ao esforço fornecida na configuração.",
     "time_to_deadline": "Pontuação de tempo até ao prazo fornecida na configuração.",
     "company_capabilities": "Pontuação de capacidades fornecida na configuração.",
@@ -113,7 +116,10 @@ def score_fit(
             opportunity_id=eligibility.opportunity_id,
             overall=None,
             components=components,
-            explanation="Não aplicável: falhou uma regra determinística de elegibilidade obrigatória.",
+            explanation=(
+                "Não aplicável: falhou uma regra determinística de "
+                "elegibilidade obrigatória."
+            ),
             assessed_at=timestamp,
         )
 
@@ -149,8 +155,8 @@ def score_fit(
         explanation = "Não há componentes pontuados disponíveis."
     else:
         explanation = (
-            "Média ponderada dos componentes disponíveis; os componentes desconhecidos ficam de fora "
-            "e os respetivos pesos são redistribuídos."
+            "Média ponderada dos componentes disponíveis; os componentes "
+            "desconhecidos ficam de fora e os respetivos pesos são redistribuídos."
         )
     return FitAssessment(
         organisation_id=eligibility.organisation_id,

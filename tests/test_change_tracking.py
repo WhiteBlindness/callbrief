@@ -8,7 +8,6 @@ from decimal import Decimal
 from callbrief.change_tracking import _TRACKED_FIELDS, detect_changes, notification_types
 from callbrief.domain import Opportunity, OpportunityStatus, OpportunityType
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

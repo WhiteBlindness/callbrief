@@ -381,7 +381,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     ):
         canonical_url = None
     opportunity_id = hashlib.sha256(
-        f"{document.source_id}\0{record_id}".encode("utf-8")
+        f"{document.source_id}\0{record_id}".encode()
     ).hexdigest()[:24]
     normalized_fields: dict[str, Any] = {}
     for name, aliases in _LIST_FIELDS.items():

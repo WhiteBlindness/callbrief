@@ -7,7 +7,6 @@ from decimal import Decimal
 from callbrief.domain import Opportunity, OpportunityStatus, OpportunityType, OrganisationProfile
 from callbrief.filtering import FilterState, OpportunityFilter, filter_opportunity
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

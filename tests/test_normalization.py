@@ -16,7 +16,6 @@ from callbrief.domain import (
 from callbrief.eligibility import assess_eligibility
 from callbrief.normalization import normalize_source_document
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

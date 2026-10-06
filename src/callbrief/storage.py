@@ -16,17 +16,15 @@ from .change_tracking import deadline_approaching, detect_changes, notification_
 from .domain import (
     ChangeRecord,
     EligibilityAssessment,
-    EligibilityFinding,
     EligibilityRule,
     EligibilityState,
     EvidenceReference,
     FitAssessment,
-    FitComponent,
+    NotificationEvent,
     Opportunity,
     OpportunityStatus,
     OpportunityType,
     OrganisationProfile,
-    NotificationEvent,
     RuleOperator,
     SourceDocument,
 )
@@ -238,7 +236,8 @@ class SqliteStore:
         """Persist a source snapshot; return True only for newly observed content."""
         cursor = self._connection.execute(
             "INSERT OR IGNORE INTO source_snapshots "
-            "(source_id, source_url, content_hash, content_type, title, text_content, metadata_json, "
+            "(source_id, source_url, content_hash, content_type, title, text_content, "
+            "metadata_json, "
             "discovered_links_json, etag, last_modified, first_seen_at, last_seen_at) "
             "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
@@ -311,7 +310,8 @@ class SqliteStore:
             changes = detect_changes(before, opportunity, detected_at=checked_at)
         with self._connection:
             self._connection.execute(
-                "INSERT INTO opportunities(id, source_id, duplicate_of, payload_json, payload_hash, updated_at) "
+                "INSERT INTO opportunities(id, source_id, duplicate_of, payload_json, "
+                "payload_hash, updated_at) "
                 "VALUES(?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET "
                 "source_id = excluded.source_id, duplicate_of = excluded.duplicate_of, "
                 "payload_json = excluded.payload_json, "
@@ -468,7 +468,8 @@ class SqliteStore:
         self, event_id: str, *, delivered_at: datetime | None = None
     ) -> bool:
         cursor = self._connection.execute(
-            "UPDATE notification_queue SET delivered_at = ? WHERE event_id = ? AND delivered_at IS NULL",
+            "UPDATE notification_queue SET delivered_at = ? "
+            "WHERE event_id = ? AND delivered_at IS NULL",
             (_timestamp(delivered_at), event_id),
         )
         self._connection.commit()

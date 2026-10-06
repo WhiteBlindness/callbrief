@@ -126,7 +126,10 @@ def _finding(
             rule_id=rule.rule_id,
             state=EligibilityState.UNCERTAIN,
             requirement=rule.reason,
-            reason=f"O valor do perfil para {rule.profile_field} é desconhecido ou não pode ser comparado.",
+            reason=(
+                f"O valor do perfil para {rule.profile_field} é desconhecido "
+                "ou não pode ser comparado."
+            ),
             evidence_ids=valid_evidence,
         )
     if matches:
@@ -158,7 +161,10 @@ def _finding(
         rule_id=rule.rule_id,
         state=EligibilityState.UNCERTAIN,
         requirement=rule.reason,
-        reason="O valor disponível no perfil não cumpre este requisito, mas o efeito não foi definido como impeditivo.",
+        reason=(
+            "O valor disponível no perfil não cumpre este requisito, mas o efeito "
+            "não foi definido como impeditivo."
+        ),
         evidence_ids=valid_evidence,
     )
 

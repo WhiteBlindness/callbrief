@@ -18,7 +18,6 @@ from callbrief.domain import (
 )
 from callbrief.storage import SqliteStore
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

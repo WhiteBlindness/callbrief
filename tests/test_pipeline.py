@@ -11,7 +11,6 @@ from callbrief.domain import SourceDocument
 from callbrief.pipeline import run_discovery
 from callbrief.storage import SqliteStore
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

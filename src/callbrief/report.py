@@ -183,19 +183,44 @@ def render_html_document(title: str, markdown: str) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'">
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; style-src 'unsafe-inline'">
   <title>{safe_title} | CallBrief</title>
   <style>
-    :root {{ color-scheme: light; font-family: system-ui, sans-serif; color: #182630; background: #f2f5f7; }}
-    body {{ max-width: 880px; margin: 0 auto; padding: 2rem 1.25rem 4rem; line-height: 1.65; }}
-    main {{ background: #fff; padding: clamp(1.25rem, 5vw, 3rem); border: 1px solid #dbe3e8; border-radius: 12px; }}
+    :root {{
+      color-scheme: light;
+      font-family: system-ui, sans-serif;
+      color: #182630;
+      background: #f2f5f7;
+    }}
+    body {{
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 4rem;
+      line-height: 1.65;
+    }}
+    main {{
+      background: #fff;
+      padding: clamp(1.25rem, 5vw, 3rem);
+      border: 1px solid #dbe3e8;
+      border-radius: 12px;
+    }}
     h1, h2 {{ line-height: 1.2; color: #14354a; }}
     h1 {{ font-size: clamp(1.8rem, 4vw, 2.5rem); }}
     h2 {{ margin-top: 2rem; font-size: 1.25rem; }}
     .notice {{ padding: 1rem; border-left: 4px solid #c38a26; background: #fbf6e8; }}
     li {{ margin: .4rem 0; }}
-    code {{ padding: .1rem .3rem; background: #edf2f5; border-radius: 4px; overflow-wrap: anywhere; }}
-    @media print {{ :root {{ background: #fff; }} body {{ max-width: none; padding: 0; }} main {{ border: 0; }} }}
+    code {{
+      padding: .1rem .3rem;
+      background: #edf2f5;
+      border-radius: 4px;
+      overflow-wrap: anywhere;
+    }}
+    @media print {{
+      :root {{ background: #fff; }}
+      body {{ max-width: none; padding: 0; }}
+      main {{ border: 0; }}
+    }}
   </style>
 </head>
 <body><main>{body}</main></body>

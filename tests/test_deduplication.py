@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from callbrief.deduplication import DuplicateKind, find_duplicate
 from callbrief.domain import Opportunity, OpportunityStatus, OpportunityType
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

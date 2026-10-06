@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from callbrief.domain import EvidenceReference, OrganisationProfile
 from callbrief.enrichment import EnrichmentFact, apply_enrichment, enrich_organisation
 
-
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 

@@ -17,7 +17,6 @@ from callbrief.domain import (
 from callbrief.eligibility import assess_eligibility
 from callbrief.scoring import FitWeights, score_fit
 
-
 NOW = datetime(2026, 10, 6, 12, tzinfo=UTC)
 
 

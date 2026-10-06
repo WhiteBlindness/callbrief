@@ -29,8 +29,8 @@ from .report import (
     write_report,
 )
 from .scoring import FitWeights, score_fit
-from .sources import SourceError, create_adapter_registry, load_source_registry
 from .settings import Settings, SettingsError
+from .sources import SourceError, create_adapter_registry, load_source_registry
 from .storage import SqliteStore
 
 
