@@ -1,0 +1,117 @@
+{
+  "schema_version": "0.2",
+  "dataset": {
+    "name": "Conjunto de avaliação do CallBrief",
+    "synthetic": true,
+    "official_calls_collected": false,
+    "real_call_human_labelled_sample": false,
+    "sample_size": 0,
+    "status": "not_measured",
+    "notes": [
+      "Os cenários incluídos são exemplos sintéticos para verificações repetíveis, não observações de avisos reais.",
+      "Não foram recolhidos 30 avisos oficiais.",
+      "Os alvos são metas de avaliação, não resultados medidos."
+    ]
+  },
+  "metrics": [
+    {
+      "id": "enabled_official_source_adapters",
+      "definition": "Número de adaptadores oficiais ativos no registo declarativo de fontes.",
+      "measured_value": 1,
+      "status": "measured_registry_configuration",
+      "target": {"min": 6, "max": 8},
+      "requires_human_labels": false,
+      "measurement_note": "O valor conta o adaptador configurado. Não confirma uma consulta em direto nem recolha de avisos."
+    },
+    {
+      "id": "official_call_records_collected",
+      "definition": "Número de avisos oficiais conservados numa amostra recolhida.",
+      "measured_value": 0,
+      "status": "measured",
+      "target": {"min": 30},
+      "requires_human_labels": false,
+      "measurement_note": "A base de avaliação não inclui avisos oficiais."
+    },
+    {
+      "id": "normalization_available_field_accuracy",
+      "definition": "Valores normalizados iguais divididos pelos campos disponíveis tanto no esperado como no observado. Valores ausentes ficam fora do cálculo.",
+      "measured_value": null,
+      "status": "not_measured",
+      "target": 0.95,
+      "requires_human_labels": true,
+      "measurement_note": "Exige uma amostra de campos de avisos normalizados e revistos por pessoas."
+    },
+    {
+      "id": "recall_at_5",
+      "definition": "Identificadores de avisos relevantes nos primeiros cinco resultados, divididos pelo total de identificadores relevantes anotados.",
+      "measured_value": null,
+      "status": "not_measured_on_real_calls",
+      "target": 0.9,
+      "requires_human_labels": true,
+      "measurement_note": "Exige avaliações humanas de relevância para cada consulta e aviso candidato. A comparação sintética separada está em evals/retrieval_benchmark.py."
+    },
+    {
+      "id": "deduplication_precision",
+      "definition": "Pares previstos como duplicados e confirmados, divididos por todos os pares previstos como duplicados.",
+      "measured_value": null,
+      "status": "not_measured",
+      "target": 0.95,
+      "requires_human_labels": true,
+      "measurement_note": "Exige uma amostra revista por pessoas de pares do mesmo aviso e de avisos distintos."
+    },
+    {
+      "id": "deterministic_eligibility_accuracy",
+      "definition": "Estados de elegibilidade iguais divididos pelos casos comparáveis anotados.",
+      "measured_value": null,
+      "status": "not_measured_on_real_calls",
+      "target": 1.0,
+      "requires_human_labels": true,
+      "measurement_note": "Os testes determinísticos existentes cobrem casos sintéticos; faltam decisões de referência para pares reais de avisos e perfis."
+    },
+    {
+      "id": "citation_validity",
+      "definition": "Identificadores de citações que apontam para evidência fornecida, divididos por todas as citações produzidas.",
+      "measured_value": null,
+      "status": "not_measured_on_application_output",
+      "target": 1.0,
+      "requires_human_labels": false,
+      "measurement_note": "O contrato rejeita citações inexistentes, mas ainda não foi avaliada uma amostra de resultados da aplicação."
+    },
+    {
+      "id": "multi_tenant_isolation",
+      "definition": "Passa quando nenhum resultado contém dados fora do espaço de trabalho e perfil consultados.",
+      "measured_value": null,
+      "status": "not_measured_in_deployment",
+      "target": {"leaks": 0, "isolated": true},
+      "requires_human_labels": false,
+      "measurement_note": "Os testes locais cobrem dois perfis sintéticos. Não demonstram isolamento num serviço alojado."
+    },
+    {
+      "id": "prompt_injection_resistance",
+      "definition": "Concordância com os resultados seguros esperados para documentos hostis e exemplos de controlo.",
+      "measured_value": null,
+      "status": "not_measured_on_model_output",
+      "target": 1.0,
+      "requires_human_labels": true,
+      "measurement_note": "Os testes verificam os limites entre instruções e conteúdo recuperado; não há uma amostra revista de respostas do modelo."
+    },
+    {
+      "id": "material_change_recall",
+      "definition": "Alterações materiais de campos detetadas, divididas pelo total de alterações esperadas.",
+      "measured_value": null,
+      "status": "not_measured_on_real_changes",
+      "target": 1.0,
+      "requires_human_labels": true,
+      "measurement_note": "Os testes determinísticos cobrem alterações sintéticas; falta um conjunto revisto de capturas reais."
+    },
+    {
+      "id": "synthetic_retrieval_recall_at_5",
+      "definition": "Média de Recall@5 em três consultas sintéticas anotadas, comparando BM25 anterior e atual.",
+      "measured_value": {"baseline": 0.3333333333333333, "current": 1.0, "change": 0.6666666666666667},
+      "status": "measured_synthetic_only",
+      "target": 0.9,
+      "requires_human_labels": false,
+      "measurement_note": "Resultado reproduzível com python evals/retrieval_benchmark.py. Não é comparável com o alvo para avisos reais."
+    }
+  ]
+}
