@@ -4,7 +4,7 @@
 
 CallBrief reúne avisos públicos, conserva a origem de cada facto e compara oportunidades com perfis separados de clientes. Esta versão demonstra um protótipo local com dados reais consultados em páginas oficiais, recuperação lexical, normalização explicável e armazenamento SQLite.
 
-**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra avaliada de 30 oportunidades foi transcrita manualmente e mantém-se separada do corpus recolhido em direto. A [execução manual de 07/10/2026](https://github.com/WhiteBlindness/callbrief/actions/runs/37700599804) passou nos quatro adaptadores e gerou 67 registos; só publicou um resumo compacto, sem os corpos das respostas.
+**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra avaliada de 30 oportunidades foi transcrita manualmente e mantém-se separada do corpus recolhido em direto. A [execução manual de 08/10/2026](https://github.com/WhiteBlindness/callbrief/actions/runs/37701014876) passou nos quatro adaptadores e gerou 67 registos; só publicou um resumo compacto, sem os corpos das respostas.
 
 ## O que demonstra
 
@@ -152,7 +152,7 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | Medida | Resultado | Leitura |
 | --- | ---: | --- |
 | Adaptadores oficiais ativos no catálogo | 4 | Funding & Tenders, TED, CINEA e Plano Anual Portugal 2030; o Plano Anual só contém previsões |
-| Verificação de fontes em direto | 4/4 aprovado | HTTP 200, esquema válido e registos aceites nas quatro fontes; o fluxo manual exige pelo menos três percursos válidos ([execução](https://github.com/WhiteBlindness/callbrief/actions/runs/37700599804)) |
+| Verificação de fontes em direto | 4/4 aprovado | HTTP 200, esquema válido e registos aceites nas quatro fontes; o fluxo manual exige pelo menos três percursos válidos ([execução](https://github.com/WhiteBlindness/callbrief/actions/runs/37701014876)) |
 | Corpus recolhido em direto | 67 | 20 Funding & Tenders, 20 TED, 20 do Plano Anual e 7 CINEA; 489 evidências `LIVE_SOURCE_VERIFIED`; os corpos das respostas não foram guardados nem enviados como artefacto |
 | Registos reais na amostra manual | 30 | 10 COMPETE, 15 Funding & Tenders e 5 CINEA |
 | Consultas de recuperação | 59 | 47 com resposta relevante e 12 sem resposta, divididas entre desenvolvimento e validação |
