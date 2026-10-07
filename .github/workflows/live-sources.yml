@@ -1,7 +1,13 @@
-name: Live source checks
+name: Live source verification
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to verify
+        required: true
+        default: main
+        type: string
 
 permissions:
   contents: read
@@ -9,24 +15,193 @@ permissions:
 jobs:
   check-active-sources:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out selected ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install CallBrief
+
+      - name: Install selected CallBrief version
         run: python -m pip install .
-      - name: Check and normalize active sources
+
+      - name: Record selected commit
+        id: target
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Check active sources
+        id: sources
+        continue-on-error: true
+        env:
+          LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
         run: >-
-          callbrief source check --all-active --json --limit 20
+          callbrief source check --all-active --json --limit 100
           --summary-path live-source-summary.json
-          --live-corpus-path "${{ runner.temp }}/callbrief-live-corpus.json"
-      - name: Upload compact source summary
+          --live-corpus-path "$LIVE_CORPUS_PATH"
+
+      - name: Summarize live corpus and enforce acceptance
+        if: always()
+        env:
+          LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
+          TARGET_REF: ${{ inputs.ref }}
+          TARGET_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from collections import Counter, defaultdict
+          from pathlib import Path
+
+          summary_path = Path("live-source-summary.json")
+          corpus_path = Path(os.environ["LIVE_CORPUS_PATH"])
+          if not summary_path.is_file() or not corpus_path.is_file():
+              print("Live source check did not produce its bounded summary and corpus.")
+              sys.exit(1)
+
+          summary = json.loads(summary_path.read_text(encoding="utf-8"))
+          corpus = json.loads(corpus_path.read_text(encoding="utf-8"))
+          sources = summary.get("sources", [])
+          records = corpus.get("records", [])
+          if not isinstance(sources, list) or not isinstance(records, list):
+              print("Unexpected live-check output format.")
+              sys.exit(1)
+
+          successful = 0
+          for item in sources:
+              failures = []
+              if item.get("success") is not True:
+                  failures.append("http_or_parser_failure")
+              if item.get("rows_accepted", 0) < 1:
+                  failures.append("no_accepted_records")
+              if item.get("rows_rejected", 0) != 0:
+                  failures.append("rejected_records")
+              if item.get("schema_status") != "valid":
+                  failures.append("schema_not_valid")
+              if item.get("parser_result") != "parsed":
+                  failures.append("parser_not_complete")
+              if item.get("pagination_state") != "complete":
+                  failures.append("pagination_incomplete_or_unknown")
+              item["workflow_gate_success"] = not failures
+              item["workflow_gate_failure_reasons"] = failures
+              successful += not failures
+          if len(sources) != summary.get("active_sources"):
+              print("The source report does not cover every active adapter.")
+              sys.exit(1)
+          if len(sources) != 4:
+              print(f"Expected 4 active adapters for this gate; found {len(sources)}.")
+              sys.exit(1)
+
+          by_source = Counter(str(item.get("source_id", "unknown")) for item in records)
+          by_status = Counter(str(item.get("status", "unknown")) for item in records)
+          status_by_source = defaultdict(Counter)
+          provenance = Counter()
+          for record in records:
+              source_id = str(record.get("source_id", "unknown"))
+              status_by_source[source_id][str(record.get("status", "unknown"))] += 1
+              for evidence in record.get("evidence", []):
+                  provenance[f"{source_id}:{evidence.get('provenance_status', 'unknown')}"] += 1
+
+          summary["selected_ref"] = os.environ["TARGET_REF"]
+          summary["selected_sha"] = os.environ["TARGET_SHA"]
+          rendered_status_by_source = {
+              source_id: dict(sorted(counts.items()))
+              for source_id, counts in sorted(status_by_source.items())
+          }
+          summary["live_corpus"].update({
+              "records_acquired": len(records),
+              "records_by_source": dict(sorted(by_source.items())),
+              "status_counts": dict(sorted(by_status.items())),
+              "status_counts_by_source": rendered_status_by_source,
+              "recently_closed": "not exposed as a distinct source field",
+              "evidence_provenance_by_source": dict(sorted(provenance.items())),
+          })
+
+          cinea = [item for item in records if item.get("source_id") == "cinea"]
+          tenders = [item for item in records if item.get("source_id") == "eu_funding_tenders"]
+          if cinea and tenders:
+              from callbrief.deduplication import find_duplicate
+              from callbrief.storage import _opportunity_from
+
+              matches = Counter()
+              exact = []
+              review = []
+              for left in cinea:
+                  candidate = _opportunity_from(json.dumps(left))
+                  for right in tenders:
+                      canonical = _opportunity_from(json.dumps(right))
+                      result = find_duplicate(candidate, (canonical,))
+                      matches[result.kind.value] += 1
+                      if result.kind.value == "exact":
+                          exact.append({
+                              "cinea_record_id": candidate.id,
+                              "canonical_record_id": result.canonical_opportunity_id,
+                              "canonical_source": canonical.source_id,
+                              "matched_by": list(result.matched_by),
+                          })
+                      elif result.kind.value in {"probable", "possible"}:
+                          review.append({
+                              "cinea_record_id": candidate.id,
+                              "funding_tenders_record_id": canonical.id,
+                              "kind": result.kind.value,
+                              "matched_by": list(result.matched_by),
+                          })
+              summary["live_deduplication"] = {
+                  "state": "evaluated",
+                  "pairs_compared": sum(matches.values()),
+                  "results": dict(sorted(matches.items())),
+                  "exact_matches": exact,
+                  "review_candidates": review,
+                  "false_looking_matches": "requires labelled review; not inferred from matcher output",
+              }
+          else:
+              summary["live_deduplication"] = {
+                  "state": "not_evaluated_no_records_from_both_sources",
+                  "cinea_records": len(cinea),
+                  "funding_tenders_records": len(tenders),
+              }
+
+          summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          lines = [
+              "## Live source verification",
+              "",
+              f"Selected ref: `{summary['selected_ref']}` (`{summary['selected_sha']}`).",
+              f"Successful active sources: **{successful}/{len(sources)}**; required: **at least 3**.",
+              f"Live records: **{len(records)}**; status counts: `{dict(sorted(by_status.items()))}`.",
+              f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
+              "",
+              "| Source | HTTP | Bytes | Received / accepted / rejected | Pagination | Schema / parser | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---|---|---|---:|---|",
+          ]
+          for item in sources:
+              lines.append(
+                  f"| {item.get('source_id')} | {item.get('http_status') or 'failed'} | "
+                  f"{item.get('response_bytes')} | {item.get('rows_received')} / "
+                  f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
+                  f"{item.get('pagination_state')} | {item.get('schema_status')} / "
+                  f"{item.get('parser_result')} | {item.get('source_timestamp')} | "
+                  f"{item.get('elapsed_ms')} | {'pass' if item.get('workflow_gate_success') else 'fail'} |"
+              )
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:
+              handle.write("\n".join(lines) + "\n")
+
+          if successful < 3:
+              print(f"Only {successful}/{len(sources)} active sources passed; at least 3 are required.")
+              sys.exit(1)
+          print(f"{successful}/{len(sources)} active sources passed the live check.")
+          PY
+
+      - name: Upload compact live-check summary
         if: always() && hashFiles('live-source-summary.json') != ''
         uses: actions/upload-artifact@v4
         with:
           name: live-source-summary
           path: live-source-summary.json
-          if-no-files-found: error
+          if-no-files-found: ignore
           retention-days: 7
