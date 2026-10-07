@@ -60,20 +60,16 @@ def _is_funding_topic_url(value: str | None) -> bool:
 
 
 def _conflicting_topic_identity(candidate: Opportunity, existing: Opportunity) -> bool:
+    if (
+        _is_funding_topic_url(candidate.canonical_url)
+        and _is_funding_topic_url(existing.canonical_url)
+        and _normalise_url(candidate.canonical_url) != _normalise_url(existing.canonical_url)
+    ):
+        return True
     if candidate.topic_id and existing.topic_id:
         if _normalise_text(candidate.topic_id) != _normalise_text(existing.topic_id):
             return True
-    same_topic_id = (
-        candidate.topic_id is not None
-        and existing.topic_id is not None
-        and _normalise_text(candidate.topic_id) == _normalise_text(existing.topic_id)
-    )
-    return (
-        not same_topic_id
-        and _is_funding_topic_url(candidate.canonical_url)
-        and _is_funding_topic_url(existing.canonical_url)
-        and _normalise_url(candidate.canonical_url) != _normalise_url(existing.canonical_url)
-    )
+    return False
 
 
 def _strong_match(candidate: Opportunity, existing: Opportunity) -> tuple[str, ...]:

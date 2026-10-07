@@ -25,12 +25,15 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "record_id": (
         "record_id",
         "id",
+        "topicCode",
+        "topicId",
+        "metadata.topicCode",
+        "metadata.topicId",
         "reference",
         "metadata.REFERENCE",
-        "metadata.callIdentifier",
         "metadata.identifier",
-        "topicCode",
         "callIdentifier",
+        "metadata.callIdentifier",
         "identifier",
         "publication-number",
         "notice-identifier",
@@ -102,7 +105,6 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "topic_id": (
         "topicCode",
         "topicId",
-        "metadata.callIdentifier",
         "metadata.topicCode",
         "metadata.topicId",
         "topic_id",
@@ -806,6 +808,8 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         for alias in (
             "topicCode",
             "topicId",
+            "metadata.topicCode",
+            "metadata.topicId",
             "callIdentifier",
             "callId",
             "identifier",
@@ -813,8 +817,6 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             "metadata.REFERENCE",
             "metadata.callIdentifier",
             "metadata.identifier",
-            "metadata.topicCode",
-            "metadata.topicId",
             "metadata.callId",
             "id",
         ):

@@ -1605,17 +1605,17 @@ class FundingTendersAdapter:
                 (
                     "id",
                     "topicCode",
-                    "callIdentifier",
-                    "identifier",
                     "topicId",
-                    "callId",
-                    "reference",
-                    "metadata.REFERENCE",
-                    "metadata.callIdentifier",
-                    "metadata.identifier",
                     "metadata.topicCode",
                     "metadata.topicId",
+                    "callId",
                     "metadata.callId",
+                    "reference",
+                    "metadata.REFERENCE",
+                    "identifier",
+                    "metadata.identifier",
+                    "callIdentifier",
+                    "metadata.callIdentifier",
                 ),
             )
             if stable_id is None:
@@ -1690,7 +1690,10 @@ class FundingTendersAdapter:
                     )
                     continue
             title = title_value[:300]
-            record_id = stable_id[:200]
+            canonical_record_id = (
+                _funding_tenders_url_identifier(details_url) if details_url is not None else None
+            )
+            record_id = (canonical_record_id or stable_id)[:200]
             links = (details_url,) if details_url is not None else ()
             scalar_metadata = tuple(
                 (key, str(value)[:500])

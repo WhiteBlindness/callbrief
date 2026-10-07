@@ -92,6 +92,32 @@ class DeduplicationTests(unittest.TestCase):
 
         self.assertEqual(result.kind, DuplicateKind.NONE)
 
+    def test_distinct_funding_topic_urls_conflict_even_when_topic_ids_match(self) -> None:
+        first = _call(
+            identifier="topic-d2",
+            source="eu_funding_tenders",
+            call_id="HORIZON-CL5-2026-01-D2-01",
+            topic_id="HORIZON-CL5-2026-01",
+            url=(
+                "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                "screen/opportunities/topic-details/horizon-cl5-2026-d2-01"
+            ),
+        )
+        second = _call(
+            identifier="topic-d5",
+            source="eu_funding_tenders",
+            call_id="HORIZON-CL5-2026-01-D5-01",
+            topic_id="HORIZON-CL5-2026-01",
+            url=(
+                "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                "screen/opportunities/topic-details/horizon-cl5-2026-d5-01"
+            ),
+        )
+
+        result = find_duplicate(first, (second,))
+
+        self.assertEqual(result.kind, DuplicateKind.NONE)
+
     def test_equivalent_canonical_urls_ignore_tracking_parameters(self) -> None:
         result = find_duplicate(
             _call(

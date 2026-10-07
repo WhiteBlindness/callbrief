@@ -348,6 +348,42 @@ class SourceAdapterTests(unittest.TestCase):
             }.issubset(sections)
         )
 
+    def test_funding_tenders_family_identifier_does_not_merge_distinct_topics(self) -> None:
+        call_family = "HORIZON-CL5-2026-01"
+        topic_ids = (f"{call_family}-D2-01", f"{call_family}-D5-01")
+        response = {
+            "totalResults": 2,
+            "results": [
+                {
+                    "metadata": {
+                        "title": ["Demonstration of clean transport solutions"],
+                        "callIdentifier": [call_family],
+                        "topicCode": [topic_id],
+                        "frameworkProgramme": ["Horizon Europe"],
+                        "status": ["31094502"],
+                        "type": ["1"],
+                        "url": [
+                            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                            f"screen/opportunities/topic-details/{topic_id}"
+                        ],
+                    },
+                }
+                for topic_id in topic_ids
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=2)
+
+        self.assertEqual(result.rejected_rows, 0)
+        self.assertEqual(len(result.documents), 2)
+        opportunities = [normalize_source_document(document) for document in result.documents]
+        self.assertEqual({opportunity.topic_id for opportunity in opportunities}, set(topic_ids))
+        self.assertEqual(
+            {opportunity.source_record_id for opportunity in opportunities}, set(topic_ids)
+        )
+        duplicate = find_duplicate(opportunities[0], opportunities[1:])
+        self.assertEqual(duplicate.kind, DuplicateKind.NONE)
+
     def test_funding_tenders_rejects_metadata_url_for_a_different_topic(self) -> None:
         response = {
             "totalResults": 1,
