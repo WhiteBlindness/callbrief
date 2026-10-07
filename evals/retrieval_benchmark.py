@@ -19,7 +19,12 @@ from callbrief.evaluation import recall_at_k
 
 TOKEN = re.compile(r"[\w]+", re.UNICODE)
 STOP_WORDS = frozenset(
-    "a ao aos as com da das de do dos e em entre for from i na nas no nos o os ou para por que se the um uma uns umas is of and or to this that may can do does applicant applicants entidade empresa empresas apoio aviso candidatura candidaturas".split()
+    (
+        "a ao aos as com da das de do dos e em entre for from i "
+        "na nas no nos o os ou para por que se the um uma uns umas "
+        "is of and or to this that may can do does applicant applicants "
+        "entidade empresa empresas apoio aviso candidatura candidaturas"
+    ).split()
 )
 SCENARIOS: tuple[dict[str, Any], ...] = (
     {
@@ -36,9 +41,17 @@ SCENARIOS: tuple[dict[str, Any], ...] = (
     },
 )
 DOCUMENTS = {
-    "pt_sme_rd": "Financiamento para pequenas e médias empresas em investigação e desenvolvimento experimental.",
-    "pt_sme_innovation": "## Pequenas e médias empresas\n\nApoio à inovação para entidades com projetos de valorização tecnológica.",
-    "pt_sme_research": "São apoiadas PME com projetos de investigação e desenvolvimento colaborativo.",
+    "pt_sme_rd": (
+        "Financiamento para pequenas e médias empresas em "
+        "investigação e desenvolvimento experimental."
+    ),
+    "pt_sme_innovation": (
+        "## Pequenas e médias empresas\n\nApoio à inovação para entidades com "
+        "projetos de valorização tecnológica."
+    ),
+    "pt_sme_research": (
+        "São apoiadas PME com projetos de investigação e desenvolvimento colaborativo."
+    ),
     "pt_large_research": "Financiamento para grandes empresas em investigação industrial.",
     "pt_training": "Formação profissional para pequenas e médias empresas.",
     "en_university": "Research funding for universities and public research organisations.",
@@ -58,18 +71,13 @@ def _legacy_rank(query: str, documents: dict[str, str]) -> tuple[str, ...]:
     terms = set(_legacy_normalise(query))
     paragraphs = {
         identifier: tuple(
-            _legacy_normalise(paragraph)
-            for paragraph in text.split("\n\n")
-            if paragraph.strip()
+            _legacy_normalise(paragraph) for paragraph in text.split("\n\n") if paragraph.strip()
         )
         for identifier, text in documents.items()
     }
     flat = [(identifier, tokens) for identifier, groups in paragraphs.items() for tokens in groups]
     total = max(1, len(flat))
-    frequency = {
-        term: sum(term in tokens for _, tokens in flat)
-        for term in terms
-    }
+    frequency = {term: sum(term in tokens for _, tokens in flat) for term in terms}
     ranked: list[tuple[float, str]] = []
     for identifier, groups in paragraphs.items():
         score = 0.0
@@ -78,7 +86,9 @@ def _legacy_rank(query: str, documents: dict[str, str]) -> tuple[str, ...]:
             for term in terms:
                 count = counts.get(term, 0)
                 if count:
-                    inverse = math.log(1 + (total - frequency[term] + 0.5) / (frequency[term] + 0.5))
+                    inverse = math.log(
+                        1 + (total - frequency[term] + 0.5) / (frequency[term] + 0.5)
+                    )
                     score += inverse * (count * 2.2) / (count + 1.2)
         if score:
             ranked.append((score, identifier))
