@@ -744,6 +744,25 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(captured[0][2]["limit"], 10)
         self.assertIn("publication-number", captured[0][2]["fields"])
 
+    def test_ted_snapshot_stays_bounded_for_large_multilot_notices(self) -> None:
+        response = {
+            "totalNoticeCount": 1,
+            "notices": [
+                {
+                    "publication-number": "123456-2026",
+                    "notice-title": "Multi-lot procurement",
+                    "deadline": ["20261030"] * 1300,
+                }
+            ],
+        }
+
+        report = TedSearchAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(len(report.documents), 1)
+        snapshot = report.documents[0].normalized_snapshot
+        self.assertIsNotNone(snapshot)
+        self.assertLessEqual(len(snapshot.encode("utf-8")), 16 * 1024)
+
     def test_ted_reports_empty_response_shape_and_string_count_safely(self) -> None:
         response = {
             "iterationNextToken": None,

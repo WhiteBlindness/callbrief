@@ -1376,6 +1376,19 @@ class TedSearchAdapter:
                 )
             ) or (canonical,)
             record = dict(row)
+            snapshot_candidate = json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            normalized_snapshot = None
+            if (
+                dict(_source_context_metadata(self.source_id)).get("snapshot_policy")
+                == "bounded_normalized"
+                and len(snapshot_candidate.encode("utf-8")) <= 16 * 1024
+            ):
+                normalized_snapshot = snapshot_candidate
             documents.append(
                 SourceDocument(
                     source_id=self.source_id,
@@ -1394,13 +1407,7 @@ class TedSearchAdapter:
                     last_modified=last_modified,
                     provenance_status=provenance,
                     source_payload_sha256=payload_hash,
-                    normalized_snapshot=(
-                        json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2)
-                        if dict(_source_context_metadata(self.source_id)).get("snapshot_policy")
-                        == "bounded_normalized"
-                        and len(json.dumps(record, ensure_ascii=False).encode("utf-8")) <= 16 * 1024
-                        else None
-                    ),
+                    normalized_snapshot=normalized_snapshot,
                 )
             )
         pagination = dict(_source_metadata(total, len(documents), limit))["source_pagination_state"]
