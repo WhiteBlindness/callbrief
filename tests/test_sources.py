@@ -6,6 +6,7 @@ import unittest
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
@@ -361,6 +362,7 @@ class SourceAdapterTests(unittest.TestCase):
         content_type = request.get_header("Content-type")
         self.assertIsNotNone(content_type)
         self.assertIn("multipart/form-data; boundary=callbrief-", content_type)
+        self.assertEqual(parse_qs(urlparse(request.full_url).query)["text"], ["***"])
         self.assertTrue(request.full_url.endswith("language=en"))
         form_body = request.data.decode("utf-8")
         self.assertIn(

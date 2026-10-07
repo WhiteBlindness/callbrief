@@ -1410,7 +1410,7 @@ class FundingTendersAdapter:
             self.endpoint,
             {
                 "apiKey": self.api_key,
-                "text": query.strip() or "*",
+                "text": query.strip() or "***",
                 "pageSize": str(limit),
                 "pageNumber": "1",
                 "language": "en",
