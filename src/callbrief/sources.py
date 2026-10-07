@@ -1326,9 +1326,9 @@ class TedSearchAdapter:
             raise ValueError("query must be text no longer than 500 characters")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        cutoff = (datetime.now(UTC).date()).toordinal() - 90
-        recent_date = date.fromordinal(cutoff).strftime("%Y%m%d")
-        selected_query = query.strip() or f"PD>={recent_date}"
+        cutoff_date = datetime.now(UTC).date() - timedelta(days=365)
+        cutoff = cutoff_date.strftime("%Y%m%d")
+        selected_query = query.strip() or f"publication-date>={cutoff}"
         transport_response = self._transport(
             self.endpoint,
             {},

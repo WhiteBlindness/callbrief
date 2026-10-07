@@ -85,8 +85,21 @@ jobs:
                   failures.append("schema_not_valid")
               if item.get("parser_result") != "parsed":
                   failures.append("parser_not_complete")
-              if item.get("pagination_state") != "complete":
-                  failures.append("pagination_incomplete_or_unknown")
+              pagination_state = item.get("pagination_state")
+              if pagination_state == "more_available":
+                  total_results = item.get("total_results")
+                  rows_returned = item.get("rows_returned")
+                  # A bounded first page is valid only when truncation is explicit.
+                  if (
+                      not isinstance(total_results, int)
+                      or isinstance(total_results, bool)
+                      or not isinstance(rows_returned, int)
+                      or rows_returned < 1
+                      or total_results <= rows_returned
+                  ):
+                      failures.append("pagination_truncation_not_explicit")
+              elif pagination_state != "complete":
+                  failures.append("pagination_state_unknown")
               item["workflow_gate_success"] = not failures
               item["workflow_gate_failure_reasons"] = failures
               successful += not failures
@@ -176,13 +189,14 @@ jobs:
               f"Live records: **{len(records)}**; status counts: `{dict(sorted(by_status.items()))}`.",
               f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
               "",
-              "| Source | HTTP | Bytes | Received / accepted / rejected | Pagination | Schema / parser | Source timestamp | Elapsed ms | Gate |",
-              "|---|---:|---:|---:|---|---|---|---:|---|",
+              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---:|---|---|---|---:|---|",
           ]
           for item in sources:
               lines.append(
                   f"| {item.get('source_id')} | {item.get('http_status') or 'failed'} | "
-                  f"{item.get('response_bytes')} | {item.get('rows_received')} / "
+                  f"{item.get('response_bytes')} | {item.get('rows_returned')} / "
+                  f"{item.get('total_results')} | {item.get('rows_received')} / "
                   f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
                   f"{item.get('pagination_state')} | {item.get('schema_status')} / "
                   f"{item.get('parser_result')} | {item.get('source_timestamp')} | "

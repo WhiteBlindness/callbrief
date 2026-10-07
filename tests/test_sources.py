@@ -738,6 +738,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertIn('"publication-date": "20261006"', item.text)
         self.assertEqual(captured[0][0], TedSearchAdapter.endpoint)
         self.assertEqual(captured[0][1], {})
+        self.assertRegex(captured[0][2]["query"], r"^publication-date>=\d{8}$")
         self.assertEqual(captured[0][2]["limit"], 10)
         self.assertIn("publication-number", captured[0][2]["fields"])
 
