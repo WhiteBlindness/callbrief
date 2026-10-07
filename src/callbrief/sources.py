@@ -1328,7 +1328,7 @@ class TedSearchAdapter:
             raise ValueError("limit must be between 1 and 100")
         cutoff_date = datetime.now(UTC).date() - timedelta(days=365)
         cutoff = cutoff_date.strftime("%Y%m%d")
-        selected_query = query.strip() or f"publication-date>={cutoff}"
+        selected_query = query.strip() or f"publication-date >= {cutoff}"
         transport_response = self._transport(
             self.endpoint,
             {},
