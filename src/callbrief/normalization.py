@@ -299,7 +299,9 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
         return OpportunityStatus.UNKNOWN
 
     status_aliases = ("status", "topicStatus", "callStatus")
-    value = _text(record, status_aliases) if _has_evidence(document, record, status_aliases) else None
+    value = (
+        _text(record, status_aliases) if _has_evidence(document, record, status_aliases) else None
+    )
     if value is None:
         deadline_aliases = (
             "deadline",
