@@ -20,11 +20,72 @@ from callbrief.domain import (
     RuleOperator,
     SourceDocument,
 )
-from callbrief.sources import SourceError, SourceFetchResult
+from callbrief.sources import SourceError, SourceFetchResult, load_source_registry
 from callbrief.storage import SqliteStore
 
 
 class CliTests(unittest.TestCase):
+    def test_source_check_all_active_emits_compact_machine_readable_summary(self) -> None:
+        definitions = tuple(
+            item
+            for item in load_source_registry()
+            if item.enabled and item.status == "active"
+        )
+
+        class Adapter:
+            def __init__(self, source_id: str) -> None:
+                self.source_id = source_id
+
+            def fetch_with_report(self, query: str = "", *, limit: int = 20):
+                document = SourceDocument(
+                    source_id=self.source_id,
+                    source_url="https://example.org/call",
+                    retrieved_at=datetime(2026, 10, 7, tzinfo=UTC),
+                    content_type="application/json",
+                    title="A funded project call",
+                    text=json.dumps(
+                        {
+                            "id": f"{self.source_id}-one",
+                            "title": "A funded project call",
+                            "programme": "Example programme",
+                            "status": "Open",
+                        }
+                    ),
+                )
+                return SourceFetchResult(
+                    source_id=self.source_id,
+                    documents=(document,),
+                    http_status=200,
+                    response_bytes=128,
+                    total_results=1,
+                    pagination_state="complete",
+                    rows_received=1,
+                )
+
+        adapters = {item.source_id: Adapter(item.source_id) for item in definitions}
+        output = io.StringIO()
+        with (
+            patch("callbrief.cli.load_source_registry", return_value=definitions),
+            patch("callbrief.cli.create_adapter_registry", return_value=adapters),
+            redirect_stdout(output),
+        ):
+            code = main(["source", "check", "--all-active", "--json"])
+
+        report = json.loads(output.getvalue())
+        self.assertEqual(code, 0)
+        self.assertEqual(len(report["sources"]), 4)
+        self.assertTrue(all(item["http_success"] for item in report["sources"]))
+        self.assertTrue(all(item["rows_accepted"] == 1 for item in report["sources"]))
+        for item in report["sources"]:
+            self.assertIn("source_id", item)
+            self.assertIn("response_bytes", item)
+            self.assertIn("pagination_state", item)
+            self.assertIn("schema_status", item)
+            self.assertIn("source_timestamp", item)
+            self.assertIn("parser_result", item)
+            self.assertGreaterEqual(item["elapsed_ms"], 0)
+        self.assertNotIn("A funded project call", output.getvalue())
+
     def test_source_list_displays_active_and_pending_sources(self) -> None:
         output = io.StringIO()
 

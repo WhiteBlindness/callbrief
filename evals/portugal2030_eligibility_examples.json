@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "dataset": "Manually transcribed Portugal 2030 annual-plan rows",
+  "captured_on": "2026-10-07",
+  "provenance": "MANUALLY_TRANSCRIBED",
+  "source_id": "portugal2030_annual_plan",
+  "source_page": "https://portugal2030.pt/plano-anual-de-avisos/",
+  "source_file": "https://portugal2030.pt/wp-content/uploads/sites/3/2026/09/PlanoAnualAvisos_download_140926-1.xlsx",
+  "source_payload_sha256": null,
+  "commercial_redistribution": false,
+  "source_page_context": {
+    "section": "Filtros de candidatura",
+    "excerpt": "Quem se pode candidatar? Tipo de promotor. Onde se pode candidatar? Regiões.",
+    "provenance": "MANUALLY_TRANSCRIBED"
+  },
+  "note": "These rows demonstrate source-backed beneficiary-type and region rules. They are not live acquisitions and do not establish permission to redistribute the workbook commercially.",
+  "records": [
+    {
+      "case_id": "manual-private-training-row",
+      "fields": {
+        "Designação do aviso": "Formação Empresarial Individual",
+        "Tipo Ent. Beneficiária": "Privada",
+        "NUTS II": "RAM"
+      }
+    },
+    {
+      "case_id": "manual-public-administration-training-row",
+      "fields": {
+        "Designação do aviso": "Formação da Administração Pública Regional e Local – CIMBAL",
+        "Tipo Ent. Beneficiária": "Pública",
+        "NUTS II": "Alentejo"
+      }
+    }
+  ]
+}

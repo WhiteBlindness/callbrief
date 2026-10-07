@@ -9,10 +9,10 @@ CallBrief reúne avisos públicos, conserva a origem de cada facto e compara opo
 ## O que demonstra
 
 - 30 oportunidades reais, atuais ou recentes, de Portugal e de programas da União Europeia.
-- 27 consultas de recuperação com rótulos de referência manuais, incluindo montantes, prazos e uma consulta sem resposta.
-- Normalização de título, estado e prazo com proveniência para excertos e ligações oficiais.
-- Deteção conservadora de duplicados por identificador ou ligação oficial; conserva variantes de fonte. Na amostra, os cinco pares CINEA/Funding & Tenders continuam por associar.
-- Avaliações independentes para dois perfis fictícios e isolamento por espaço de trabalho e cliente.
+- 59 consultas de recuperação com rótulos manuais: 19 para calibração e 40 para validação, incluindo 12 consultas sem resposta.
+- Normalização de identificadores, programas, datas, orçamento e campos de candidatura, com evidência para excertos e ligações oficiais.
+- Correspondência exata dos cinco pares CINEA/Funding & Tenders, com dez pares negativos e sem associação automática de candidatos possíveis ou prováveis.
+- Avaliações de elegibilidade sustentadas por um campo oficial de tipo de beneficiário, além de isolamento por espaço de trabalho e cliente.
 - Regras de elegibilidade determinísticas, histórico de alterações e fila local de notificações.
 
 ## Fontes e dados
@@ -25,7 +25,7 @@ CallBrief reúne avisos públicos, conserva a origem de cada facto e compara opo
 | [COMPETE 2030](https://compete2030.gov.pt/avisos/) | Avisos nacionais | Sem adaptador ativo | A reutilização automática aguarda esclarecimento dos termos |
 | [Plano Anual de Avisos Portugal 2030](https://portugal2030.pt/plano-anual-de-avisos/) | Previsões de avisos futuros, nunca confirmação de abertura | Adaptador XLSX ativo, com campos selecionados e ligação à origem | Os termos do ficheiro exigem confirmação; redistribuição comercial desativada |
 
-A API TED permite pesquisar avisos publicados e a documentação descreve utilização para análise e reutilização. A página da CINEA serve para descobrir prazos LIFE; a ligação para cada aviso completo aponta para o Funding & Tenders. A política geral da Comissão prevê reutilização com atribuição salvo indicação em contrário ou direitos de terceiros. Isso não confirma, por si só, as condições de cada dado devolvido pela API.
+A API TED permite pesquisar avisos publicados e a documentação descreve utilização para análise e reutilização. A página da CINEA serve para descobrir prazos LIFE; a ligação para cada aviso completo aponta para o Funding & Tenders. A CINEA funciona como fonte de descoberta da agência e o Funding & Tenders como registo canónico do programa. A política geral da Comissão prevê reutilização com atribuição salvo indicação em contrário ou direitos de terceiros. Isso não confirma, por si só, as condições de cada dado devolvido pela API.
 
 O [Plano Anual de Avisos](https://portugal2030.pt/plano-anual-de-avisos/) descreve o XLSX para consulta como aberto, pesquisável e editável. A página liga o [ficheiro XLSX do plano de setembro de 2026 a agosto de 2027](https://portugal2030.pt/wp-content/uploads/sites/3/2026/09/PlanoAnualAvisos_download_140926-1.xlsx), que serve tecnicamente como fonte canónica de previsões: contém identificadores, programas e datas previstas. Não confirma que um aviso esteja formalmente aberto. Não foi localizada uma licença específica para este ficheiro. Por isso, o adaptador conserva apenas campos selecionados e a ligação à origem; a redistribuição comercial continua desativada até a AD&C esclarecer as condições. Esta decisão sobre o ficheiro não altera a política aplicada ao conteúdo geral do portal.
 
@@ -35,7 +35,15 @@ Pergunta preparada para a AD&C: «Autorizam a recolha periódica dos identificad
 
 ### Agent-Reach
 
-CallBrief implementa `AgentReachSourceAdapter` atrás da interface `SourceAdapter` e recebe um serviço de recolha por injeção. Não foi encontrada uma instalação, ferramenta ou interface Agent-Reach utilizável neste ambiente. A ligação não foi executada; a aplicação não inclui código interno do Agent-Reach nem o apresenta como fonte de verdade.
+CallBrief implementa `AgentReachSourceAdapter` através de uma interface de ponte. A ponte tem de fornecer `fetch(query, limit)` e devolver páginas com URL, título, texto, tipo de conteúdo, ligações, metadados e hora de recolha opcionais. CallBrief valida os domínios permitidos e converte os resultados em oportunidades sem depender dos detalhes internos do Agent-Reach. Os testes de contrato usam um serviço falso; o serviço Agent-Reach não está disponível na nuvem nem faz parte do CI.
+
+Quando a ponte estiver instalada localmente, o teste de integração é:
+
+```powershell
+python scripts/verify_agent_reach.py --allowed-host portugal2030.pt --query "avisos Portugal 2030"
+```
+
+O comando espera o módulo `agent_reach_callbrief_bridge:create_bridge`, configurável com `--factory`. O teste local real continua por executar.
 
 ### Amostra de oportunidades
 
@@ -49,7 +57,7 @@ O conjunto em `evals/real_opportunities.json` contém 30 registos consultados ma
 
 Na data de referência, a amostra contém 24 oportunidades abertas, uma futura e cinco encerradas nos últimos 90 dias. A página de `MPr-2026-6` ainda mostra 30/09/2026 numa secção, mas o [PDF oficial da republicação](https://compete2030.gov.pt/wp-content/uploads/2026/06/AVISOM3-1.pdf), datado de 30/09/2026, confirma 30/10/2026 como fim do período. O PDF limita a prorrogação indicada a candidatos com pedidos pendentes no MPr-2025-9. O registo guarda o excerto, a página do PDF e a ligação à fonte na evidência da oportunidade.
 
-Os registos guardam ligações oficiais e excertos curtos. Não incluem respostas integrais das páginas nem resumos criptográficos dessas respostas. Os rótulos foram preparados numa só passagem e não tiveram validação independente por uma segunda pessoa. Assim, constituem um ponto de partida reproduzível, não uma avaliação humana independente.
+Os 30 registos manuais preservam ligações oficiais, excertos e o rótulo `MANUALLY_TRANSCRIBED`. Não têm hash das respostas originais e não foram recolhidos pelos adaptadores. Nas recolhas ao vivo, os adaptadores calculam SHA-256 da resposta em memória e associam o hash, URL e hora de recolha à evidência. O TED conserva ainda uma captura normalizada limitada a 16 KiB; as outras fontes conservam apenas campos e excertos mínimos. Os testes e documentos locais identificam-se como `CAPTURED_FIXTURE`. O hash identifica a resposta recebida, mas, sem guardar essa resposta, não permite recalculá-lo numa auditoria futura. Os rótulos foram preparados numa só passagem e não tiveram validação independente.
 
 ## Fluxo de dados
 
@@ -86,7 +94,11 @@ callbrief discover --source eu_funding_tenders --query "SME research" --database
 callbrief opportunity list --database callbrief.sqlite3
 ```
 
-`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. Não guarda os dados. A disponibilidade externa não faz parte dos testes normais.
+`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. Para verificar todas as fontes ativas num agente GitHub-hosted, iniciar manualmente o workflow `Live source checks` em GitHub Actions. O workflow falha se uma fonte não produzir registos válidos; guarda apenas um resumo compacto como artefacto. O corpus normalizado da execução fica no diretório temporário do agente e não é carregado como artefacto.
+
+```powershell
+callbrief source check --all-active --json
+```
 
 Criar um perfil e avaliar uma oportunidade guardada:
 
@@ -129,38 +141,37 @@ Os tipos filtráveis incluem subvenções, incentivos reembolsáveis, empréstim
 
 O SQLite guarda oportunidades comuns uma única vez, variantes por fonte, perfis por espaço de trabalho e avaliações por cliente. As consultas a perfis, avaliações e notificações de adequação incluem os identificadores do espaço de trabalho e da organização. Os avisos e as respetivas alterações são partilhados; uma notificação de adequação elevada pertence ao perfil avaliado.
 
-Os relatórios incluem critérios, componentes, evidências e perguntas em aberto. O HTML escapa conteúdo não fiável, só aceita ligações HTTPS e não executa JavaScript. Os factos normalizados apontam para excertos, origem e localização. Na amostra atual, a ligação estrutural aos excertos foi verificada, mas não foi possível comparar os excertos com capturas integrais arquivadas.
+Os relatórios incluem critérios, componentes, evidências e perguntas em aberto. O HTML escapa conteúdo não fiável, só aceita ligações HTTPS e não executa JavaScript. Cada evidência identifica a origem como `LIVE_SOURCE_VERIFIED`, `CAPTURED_FIXTURE` ou `MANUALLY_TRANSCRIBED`, além de guardar excerto, URL e localização. Os dados manuais não se apresentam como aquisição automática.
 
 O comando anterior `callbrief assess` continua disponível para avaliar documentos locais com um modelo compatível com Chat Completions. Por omissão, usa um serviço local. O envio para um serviço remoto exige `--allow-remote`; só seguem os excertos devolvidos pela pesquisa. O novo fluxo de avisos de financiamento não envia documentos a um modelo.
 
 ## Avaliação e resultados
 
-O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`. As medidas usam os 30 registos e 27 consultas do conjunto manual. As 26 consultas com resposta anotada cobrem atividade, geografia, tipo de candidato, consórcio, montantes, prazos e avisos semelhantes; uma consulta não tem resultado relevante na amostra.
+O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`. Usa os 30 registos manuais e 59 consultas: 47 com resposta relevante e 12 sem resposta. O subconjunto de desenvolvimento tem 13 consultas respondíveis e seis sem resposta. As 40 consultas de validação têm 34 respondíveis e seis sem resposta. O limiar de abstenção é escolhido apenas no subconjunto de desenvolvimento.
 
 | Medida | Resultado | Leitura |
 | --- | ---: | --- |
 | Adaptadores oficiais ativos no catálogo | 4 | Funding & Tenders, TED, CINEA e Plano Anual Portugal 2030; o Plano Anual só contém previsões |
-| Verificações HTTP concluídas nesta máquina | 0 de 4 tentativas | As quatro fontes falharam antes de receber resposta; a disponibilidade em direto continua por confirmar |
+| Verificação de fontes em direto | Workflow manual do GitHub Actions | O agente faz pedidos HTTP reais; consultar o resumo compacto da execução mais recente |
 | Registos reais na amostra manual | 30 | 10 COMPETE, 15 Funding & Tenders e 5 CINEA |
-| Consultas de recuperação | 27 | 26 com resposta relevante e uma sem resposta |
-| *Recall@5*, referência anterior | 1,00 | 26 consultas respondíveis |
-| *Recall@5*, pesquisa atual | 1,00 | Sem melhoria face à referência neste conjunto |
-| MRR@5, referência e pesquisa atual | 1,00 e 1,00 | Todos os relevantes surgiram em primeiro lugar neste conjunto |
-| Falsos positivos na consulta sem resposta | 1 de 1, nos dois métodos | A pesquisa não se absteve |
-| Tempo médio de pesquisa local | Referência: 1,03 ms; atual: 1,77 ms | Uma execução, 27 consultas e 30 registos em memória; exclui acesso às fontes |
-| Normalização de título, estado e prazo | 85/85 corretos, 1,00 | Rótulos de referência de passagem única, sem segunda revisão |
-| Citações estruturais | 85/85 excertos exatos, 1,00 | Sem resumos criptográficos das respostas oficiais arquivadas |
-| Evidência da condição da prorrogação | 1/1 excerto ligado à oportunidade | Ligação e localização no PDF preservadas; o corpo e o resumo criptográfico não foram arquivados |
-| Deduplicação entre CINEA e Funding & Tenders | 0 dos 5 pares positivos detetados; precisão não calculável | Zero previsões e zero falsos positivos; os registos CINEA não incluem o identificador encontrado na ligação oficial de espelho |
-| Avaliação de dois clientes | 2 perfis, ambos «incerto» | A amostra não contém regras de elegibilidade completas |
+| Consultas de recuperação | 59 | 47 com resposta relevante e 12 sem resposta, divididas entre desenvolvimento e validação |
+| *Recall@5*, referência e pesquisa atual | 0,912 e 0,912 | Nas 34 consultas respondíveis de validação; não há melhoria de ordenação medida |
+| MRR@5, referência e pesquisa atual | 0,875 e 0,875 | Os métodos têm a mesma posição recíproca média neste conjunto |
+| Abstenção, precisão e sensibilidade | 0,556 e 0,833 | Seis consultas de validação sem resposta; 11,8% das consultas respondíveis também foram recusadas |
+| Normalização de campos do corpus principal | 165/165 corretos, 1,00 | Identificador, programa, título, estado, abertura, prazo e um montante; campos ausentes não entram no cálculo |
+| Normalização das linhas do Plano Anual | Tipo de beneficiário: 2/2; região: 2/2 | Duas linhas manuais; cada campo tem excerto exato e contexto dos filtros oficiais de candidatura |
+| Citações estruturais | 165/165 excertos exatos, 1,00 | Os 30 registos são manuais e não têm hash da resposta original |
+| Evidência da condição da prorrogação | 1/1 excerto ligado à oportunidade | PDF e localização preservados no registo manual; não há captura nem hash original |
+| Deduplicação, pares rotulados | Precisão 1,00; sensibilidade 1,00 | Cinco pares CINEA/Funding & Tenders detetados; dez negativos do corpus e um caso anual controlado rejeitados; resultados não exatos exigem revisão |
+| Elegibilidade no exemplo de vários clientes | Elegível, 2 inelegíveis e incerto | Entidade privada na RAM; entidade pública na RAM; entidade privada no Alentejo; perfil sem região. As regras citam beneficiário e NUTS II; não há exemplo remediável sustentado |
 
-As medidas de normalização, recuperação, citação e deduplicação não foram validadas por uma segunda pessoa. Os pares de duplicados mostram uma limitação concreta: o sistema não associa os avisos CINEA aos registos de Funding & Tenders sem um identificador comum. A consulta sem resposta também recebeu resultados e precisa de uma regra de abstenção. A avaliação do perfil não inventa critérios ausentes.
+As medidas de normalização, recuperação, citação e deduplicação não foram validadas por uma segunda pessoa. O desempenho de ordenação da pesquisa atual é igual ao da referência neste conjunto. A abstenção recupera cinco das seis consultas sem resposta, mas também recusa algumas consultas respondíveis. O conjunto de validação é pequeno e os resultados não medem qualidade em produção. A elegibilidade demonstra apenas os campos de tipo de beneficiário e região publicados no Plano Anual; o plano contém previsões e não confirma avisos abertos.
 
 O conjunto sintético `evals/corpus/scenarios.json` continua a testar elegibilidade, fontes contraditórias, duplicados, alterações, recuperação, conteúdo malicioso e isolamento. Esses cenários não se confundem com os avisos reais. A suite local confirma os comportamentos cobertos pelos testes; não mede isolamento ou qualidade num serviço alojado.
 
 ### Alterações e notificações
 
-A base de dados regista alterações materiais, incluindo mudança de prazo e de estado, e coloca eventos na fila local. Os testes verificam esses eventos com capturas controladas. A amostra real contém apenas um estado atual por aviso, por isso ainda não permite demonstrar alertas reais de abertura, encerramento, alteração de prazo ou adequação elevada. Não há envio por correio eletrónico ou mensagens.
+A base de dados regista alterações materiais, incluindo mudança de prazo e de estado, e coloca eventos na fila local. Um teste com duas capturas JSON no formato do Funding & Tenders detecta mudanças de prazo, estado e documentos. É uma verificação controlada, não uma alteração observada em direto. A amostra real contém apenas um estado atual por aviso, por isso ainda não demonstra alertas reais de abertura, encerramento, alteração de prazo ou adequação elevada. Não há envio por correio eletrónico ou mensagens.
 
 ### Enriquecimento de NIF
 
@@ -175,15 +186,14 @@ python evals/retrieval_benchmark.py
 python -m evals.real_corpus_benchmark
 ```
 
-O CI está configurado para Python 3.12, 3.13 e 3.14, além de formatação, análise estática e análise de tipos. Neste ambiente foi executado Python 3.14.6. Ruff e mypy não estão instalados localmente; a matriz e as verificações configuradas no CI dão cobertura adicional.
+O CI está configurado para Python 3.12, 3.13 e 3.14, além de formatação, análise estática e análise de tipos.
 
 ## Limites desta versão
 
-- Os quatro adaptadores ativos não conseguiram obter resposta HTTP neste ambiente; a disponibilidade em direto continua por confirmar.
-- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui respostas integrais nem resumos criptográficos das páginas originais.
+- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes.
 - A licença e as condições de reutilização comercial dos dados devolvidos pela API Funding & Tenders precisam de confirmação específica.
 - A recolha dos avisos formalmente abertos do Portugal 2030 e do COMPETE aguarda uma fonte estruturada autorizada ou esclarecimento de reutilização. O adaptador do Plano Anual serve apenas previsões e mantém a redistribuição comercial desativada.
-- Agent-Reach tem uma interface de adaptação preparada, sem ligação executável neste ambiente.
+- Agent-Reach tem testes de contrato com serviço falso; a ligação local real não foi executada e não está disponível no ambiente de nuvem.
 - A elegibilidade depende de regras normalizadas e de dados fornecidos pelo utilizador; não interpreta automaticamente documentos PDF ou páginas de avisos.
 - O enriquecimento por NIF não tem fornecedor ligado.
 - A fila de notificações é local e não envia mensagens externas.

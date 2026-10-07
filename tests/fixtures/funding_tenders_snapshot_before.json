@@ -1,0 +1,17 @@
+{
+  "totalResults": 1,
+  "results": [
+    {
+      "id": "LIFE-2026-SAP-ENV-ENVIRONMENT",
+      "content": {
+        "id": "LIFE-2026-SAP-ENV-ENVIRONMENT",
+        "topicCode": "LIFE-2026-SAP-ENV-ENVIRONMENT",
+        "programmeName": "LIFE",
+        "title": "Circular economy and clean environment",
+        "status": "Open",
+        "deadlineDate": "2026-09-22",
+        "documents": ["call-fiche-v1.pdf"]
+      }
+    }
+  ]
+}

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from io import BytesIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from callbrief.domain import SourceDocument
+from callbrief.domain import EvidenceProvenance, SourceDocument
 from callbrief.normalization import normalize_source_document
 from callbrief.sources import (
     AgentReachPage,
@@ -15,6 +15,7 @@ from callbrief.sources import (
     CineaLifeAdapter,
     FundingTendersAdapter,
     HttpBinaryResponse,
+    HttpJsonResponse,
     HttpTextResponse,
     Portugal2030AnnualPlanAdapter,
     SourceAdapter,
@@ -160,6 +161,27 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(report.total_results, 2)
         self.assertEqual(report.pagination_state, "complete")
 
+    def test_live_funding_tenders_response_hash_reaches_field_evidence(self) -> None:
+        raw_response = json.dumps(FIXTURE_RESPONSE, ensure_ascii=False).encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
+        transport_response = HttpJsonResponse(
+            FIXTURE_RESPONSE,
+            200,
+            len(raw_response),
+            source_payload_sha256=payload_hash,
+            provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
+        document = FundingTendersAdapter(transport=lambda *_: transport_response).fetch()[0]
+        opportunity = normalize_source_document(document)
+        evidence = next(item for item in opportunity.evidence if item.section == "title")
+
+        self.assertEqual(document.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
+        self.assertEqual(document.source_payload_sha256, payload_hash)
+        self.assertEqual(evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
+        self.assertEqual(evidence.source_payload_sha256, payload_hash)
+        self.assertIsNone(evidence.normalized_snapshot)
+
     def test_adapter_rejects_invalid_query_and_limit_before_transport(self) -> None:
         def unexpected_transport(*_args):
             self.fail("must not make a request")
@@ -192,6 +214,11 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(registry["ted_eu_procurement"].status, "active")
         self.assertEqual(registry["cinea"].status, "active")
         self.assertEqual(registry["portugal2030_annual_plan"].status, "active")
+        self.assertFalse(registry["eu_funding_tenders"].commercial_redistribution)
+        self.assertTrue(registry["ted_eu_procurement"].commercial_redistribution)
+        self.assertEqual(registry["cinea"].source_role, "discovery")
+        self.assertEqual(registry["cinea"].canonical_source, "eu_funding_tenders")
+        self.assertEqual(registry["eu_funding_tenders"].source_role, "canonical")
         self.assertEqual(
             registry["portugal2030_annual_plan"].legal_status,
             "terms_need_confirmation",
@@ -251,6 +278,12 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(str(opportunity.budget_total), "1500000")
         self.assertEqual(opportunity.eligible_regions, ("Norte",))
         self.assertEqual(opportunity.eligible_applicant_types, ("Privada", "Pública"))
+        eligibility_rules = {item.profile_field: item for item in opportunity.eligibility_rules}
+        self.assertIn("regions", eligibility_rules)
+        self.assertIn("applicant_types", eligibility_rules)
+        evidence_by_id = {item.evidence_id: item for item in opportunity.evidence}
+        region_evidence = evidence_by_id[eligibility_rules["regions"].evidence_ids[0]]
+        self.assertIn("NUTS II", region_evidence.section or "")
         self.assertIsNone(opportunity.canonical_url)
         self.assertIn(
             "https://portugal2030.pt/plano-anual-de-avisos/",
@@ -262,6 +295,14 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertTrue(any("30/11/2099" in item.excerpt for item in opportunity.evidence))
         self.assertEqual(
             dict(document.metadata)["source_payload_sha256"],
+            hashlib.sha256(payload).hexdigest(),
+        )
+        opportunity_evidence = next(
+            item for item in opportunity.evidence if "Descarboniza" in item.excerpt
+        )
+        self.assertEqual(opportunity_evidence.provenance_status, "CAPTURED_FIXTURE")
+        self.assertEqual(
+            opportunity_evidence.source_payload_sha256,
             hashlib.sha256(payload).hexdigest(),
         )
 
@@ -404,9 +445,16 @@ class SourceAdapterTests(unittest.TestCase):
         </a>
         <p>Deadline date: 22 September 2026</p>
         </body></html>"""
+        raw_response = html.encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
         adapter = CineaLifeAdapter(
             transport=lambda endpoint, timeout: HttpTextResponse(
-                html, 200, len(html.encode("utf-8")), "Tue, 06 Oct 2026 10:00:00 GMT"
+                html,
+                200,
+                len(raw_response),
+                "Tue, 06 Oct 2026 10:00:00 GMT",
+                payload_hash,
+                EvidenceProvenance.LIVE_SOURCE_VERIFIED,
             )
         )
 
@@ -420,6 +468,20 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(len(result.documents), 2)
         self.assertIn("22 September 2026", result.documents[0].text)
         self.assertTrue(dict(result.documents[0].metadata)["record_id"].startswith("CINEA-"))
+        self.assertEqual(
+            result.documents[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
+        )
+        self.assertEqual(result.documents[0].source_payload_sha256, payload_hash)
+        self.assertEqual(dict(result.documents[0].metadata)["source_family"], "eu_direct_funding")
+        self.assertEqual(
+            dict(result.documents[0].metadata)["canonical_source"], "eu_funding_tenders"
+        )
+        deadline_evidence = result.documents[0].evidence(
+            0, len(result.documents[0].text), section="deadline"
+        )
+        self.assertEqual(deadline_evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
+        self.assertEqual(deadline_evidence.source_payload_sha256, payload_hash)
+        self.assertIsNone(deadline_evidence.normalized_snapshot)
         self.assertEqual(
             {document.discovered_links[0] for document in result.documents},
             {
@@ -466,6 +528,44 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(captured[0][2]["limit"], 10)
         self.assertIn("publication-number", captured[0][2]["fields"])
 
+    def test_ted_retains_only_a_bounded_normalized_snapshot_with_live_hash(self) -> None:
+        response = {
+            "total": 1,
+            "results": [
+                {
+                    "publication-number": "123456-2026",
+                    "notice-title": "Digital services framework",
+                    "publication-date": "20261006",
+                    "deadline": "20261030",
+                }
+            ],
+        }
+        raw_response = json.dumps(response, ensure_ascii=False).encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
+        transport_response = HttpJsonResponse(
+            response,
+            200,
+            len(raw_response),
+            source_payload_sha256=payload_hash,
+            provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
+        document = TedSearchAdapter(transport=lambda *_: transport_response).fetch()[0]
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(document.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
+        self.assertEqual(document.source_payload_sha256, payload_hash)
+        self.assertIsNotNone(document.normalized_snapshot)
+        self.assertLessEqual(len(document.normalized_snapshot.encode("utf-8")), 16 * 1024)
+        self.assertTrue(opportunity.evidence)
+        self.assertEqual(
+            opportunity.evidence[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
+        )
+        self.assertEqual(opportunity.evidence[0].source_payload_sha256, payload_hash)
+        self.assertEqual(
+            opportunity.evidence[0].normalized_snapshot, document.normalized_snapshot
+        )
+
     def test_agent_reach_adapter_maps_only_approved_official_pages(self) -> None:
         class Bridge:
             def fetch(self, query, *, limit):
@@ -491,6 +591,48 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(len(documents), 1)
         self.assertEqual(documents[0].source_id, "agent_reach")
         self.assertEqual(documents[0].discovered_links, ("https://portugal2030.pt/avisos/2",))
+
+    def test_agent_reach_fake_service_flows_into_callbrief_normalization(self) -> None:
+        record = {
+            "id": "PT2030-TEST-1",
+            "title": "Apoio a empresas privadas",
+            "programme": "COMPETE 2030",
+            "status": "Open",
+            "deadline": "2026-12-31",
+        }
+        source_payload_sha256 = hashlib.sha256(
+            json.dumps(record, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+        class Bridge:
+            def fetch(self, query, *, limit):
+                return (
+                    AgentReachPage(
+                        url="https://portugal2030.pt/avisos/1",
+                        title=record["title"],
+                        text=json.dumps(record, ensure_ascii=False),
+                        content_type="application/json",
+                        source_payload_sha256=source_payload_sha256,
+                        provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+                    ),
+                )
+
+        documents = AgentReachSourceAdapter(
+            Bridge(), allowed_hosts=("portugal2030.pt",)
+        ).fetch("PT2030", limit=1)
+        opportunity = normalize_source_document(documents[0])
+
+        self.assertEqual(opportunity.source_record_id, "PT2030-TEST-1")
+        self.assertEqual(opportunity.title, record["title"])
+        self.assertEqual(opportunity.programme, record["programme"])
+        self.assertEqual(opportunity.deadline.date().isoformat(), "2026-12-31")
+        self.assertTrue(opportunity.evidence)
+        self.assertEqual(
+            opportunity.evidence[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
+        )
+        self.assertEqual(
+            opportunity.evidence[0].source_payload_sha256, source_payload_sha256
+        )
 
     def test_agent_reach_bridge_is_injected_without_scraping_implementation(self) -> None:
         class AgentReachBridge:

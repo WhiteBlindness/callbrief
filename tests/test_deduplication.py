@@ -18,6 +18,10 @@ def _call(
     authority: str = "COMPETE 2030",
     deadline: datetime | None = None,
     url: str | None = None,
+    source_family: str | None = None,
+    source_role: str | None = None,
+    canonical_source: str | None = None,
+    authority_relationship: str | None = None,
 ) -> Opportunity:
     return Opportunity(
         id=identifier,
@@ -32,6 +36,10 @@ def _call(
         opportunity_type=OpportunityType.GRANT,
         deadline=deadline,
         source_retrieved_at=NOW,
+        source_family=source_family,
+        source_role=source_role,
+        canonical_source=canonical_source,
+        authority_relationship=authority_relationship,
     )
 
 
@@ -109,6 +117,56 @@ class DeduplicationTests(unittest.TestCase):
                 ),
             ),
         )
+
+        self.assertEqual(result.kind, DuplicateKind.NONE)
+
+    def test_agency_discovery_relationship_is_reviewable_without_authority_equality(self) -> None:
+        cinea = _call(
+            identifier="cinea",
+            source="cinea_life",
+            call_id=None,
+            authority="European Climate, Infrastructure and Environment Executive Agency",
+            deadline=NOW,
+            source_family="eu_direct_funding",
+            source_role="discovery",
+            canonical_source="eu_funding_tenders",
+            authority_relationship="agency_presentation_to_canonical_topic",
+        )
+        funding_tenders = _call(
+            identifier="funding-tenders",
+            source="eu_funding_tenders",
+            call_id=None,
+            authority="European Commission",
+            deadline=NOW,
+            source_family="eu_direct_funding",
+            source_role="canonical",
+            canonical_source="eu_funding_tenders",
+            authority_relationship="canonical_programme_record",
+        )
+
+        result = find_duplicate(cinea, (funding_tenders,))
+
+        self.assertEqual(result.kind, DuplicateKind.PROBABLE)
+        self.assertIsNone(result.canonical_opportunity_id)
+        self.assertIn("known_source_relationship", result.matched_by)
+
+    def test_same_title_in_recurring_annual_calls_is_not_a_duplicate(self) -> None:
+        current = _call(
+            identifier="current",
+            source="portal-a",
+            call_id="TRAINING-2026",
+            title="Formação empresarial para pequenas empresas",
+            deadline=datetime(2026, 12, 1, tzinfo=UTC),
+        )
+        previous = _call(
+            identifier="previous",
+            source="portal-b",
+            call_id="TRAINING-2025",
+            title="Formação empresarial para pequenas empresas",
+            deadline=datetime(2025, 12, 1, tzinfo=UTC),
+        )
+
+        result = find_duplicate(current, (previous,))
 
         self.assertEqual(result.kind, DuplicateKind.NONE)
 

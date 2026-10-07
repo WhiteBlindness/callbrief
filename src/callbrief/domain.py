@@ -58,6 +58,12 @@ class Cadence(StrEnum):
     MANUAL = "manual"
 
 
+class EvidenceProvenance(StrEnum):
+    LIVE_SOURCE_VERIFIED = "LIVE_SOURCE_VERIFIED"
+    CAPTURED_FIXTURE = "CAPTURED_FIXTURE"
+    MANUALLY_TRANSCRIBED = "MANUALLY_TRANSCRIBED"
+
+
 def _required_text(value: str, name: str, maximum: int = 500) -> None:
     if not isinstance(value, str) or not value.strip() or len(value) > maximum:
         raise DomainValidationError(f"{name} must contain between 1 and {maximum} characters")
@@ -85,6 +91,9 @@ class EvidenceReference:
     end: int
     excerpt: str
     source_hash: str
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+    source_payload_sha256: str | None = None
+    normalized_snapshot: str | None = None
 
     def __post_init__(self) -> None:
         for value, name, maximum in (
@@ -98,6 +107,24 @@ class EvidenceReference:
             raise DomainValidationError("Evidence span must match the exact excerpt boundaries")
         if not re.fullmatch(r"[0-9a-f]{64}", self.source_hash):
             raise DomainValidationError("source_hash must be a SHA-256 hex digest")
+        if self.source_payload_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.source_payload_sha256
+        ):
+            raise DomainValidationError("source_payload_sha256 must be a SHA-256 hex digest")
+        if not isinstance(self.provenance_status, EvidenceProvenance):
+            try:
+                object.__setattr__(
+                    self, "provenance_status", EvidenceProvenance(self.provenance_status)
+                )
+            except ValueError as exc:
+                raise DomainValidationError("Unsupported evidence provenance status") from exc
+        if self.provenance_status is EvidenceProvenance.LIVE_SOURCE_VERIFIED:
+            if self.source_payload_sha256 is None:
+                raise DomainValidationError("Live-source evidence requires its response SHA-256")
+        if self.normalized_snapshot is not None and len(
+            self.normalized_snapshot.encode("utf-8")
+        ) > 16 * 1024:
+            raise DomainValidationError("normalized_snapshot cannot exceed 16 KiB")
         if self.retrieved_at.tzinfo is None:
             raise DomainValidationError("retrieved_at must include a timezone")
 
@@ -114,6 +141,9 @@ class SourceDocument:
     discovered_links: tuple[str, ...] = ()
     etag: str | None = None
     last_modified: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+    source_payload_sha256: str | None = None
+    normalized_snapshot: str | None = None
 
     def __post_init__(self) -> None:
         _required_text(self.source_id, "source_id", 100)
@@ -126,6 +156,24 @@ class SourceDocument:
             raise DomainValidationError("retrieved_at must include a timezone")
         if len(self.metadata) > 100 or len(self.discovered_links) > 500:
             raise DomainValidationError("source metadata or discovered links exceed their limits")
+        if not isinstance(self.provenance_status, EvidenceProvenance):
+            try:
+                object.__setattr__(
+                    self, "provenance_status", EvidenceProvenance(self.provenance_status)
+                )
+            except ValueError as exc:
+                raise DomainValidationError("Unsupported source provenance status") from exc
+        if self.source_payload_sha256 is not None and not re.fullmatch(
+            r"[0-9a-f]{64}", self.source_payload_sha256
+        ):
+            raise DomainValidationError("source_payload_sha256 must be a SHA-256 hex digest")
+        if self.provenance_status is EvidenceProvenance.LIVE_SOURCE_VERIFIED:
+            if self.source_payload_sha256 is None:
+                raise DomainValidationError("Live source documents require their response SHA-256")
+        if self.normalized_snapshot is not None and len(
+            self.normalized_snapshot.encode("utf-8")
+        ) > 16 * 1024:
+            raise DomainValidationError("normalized_snapshot cannot exceed 16 KiB")
         for link in self.discovered_links:
             _https_url(link, "discovered_links item")
 
@@ -150,6 +198,9 @@ class SourceDocument:
             end=end,
             excerpt=excerpt,
             source_hash=self.content_hash,
+            provenance_status=self.provenance_status,
+            source_payload_sha256=self.source_payload_sha256,
+            normalized_snapshot=self.normalized_snapshot,
         )
 
 
@@ -217,6 +268,10 @@ class Opportunity:
     last_checked_at: datetime | None = None
     raw_source_reference: str | None = None
     duplicate_of: str | None = None
+    source_family: str | None = None
+    source_role: str | None = None
+    canonical_source: str | None = None
+    authority_relationship: str | None = None
 
     def __post_init__(self) -> None:
         for required_value, required_name in (
@@ -229,6 +284,10 @@ class Opportunity:
             (self.programme, "programme"),
             (self.title, "title"),
             (self.authority, "authority"),
+            (self.source_family, "source_family"),
+            (self.source_role, "source_role"),
+            (self.canonical_source, "canonical_source"),
+            (self.authority_relationship, "authority_relationship"),
         ):
             if optional_value is not None:
                 _required_text(optional_value, optional_name)

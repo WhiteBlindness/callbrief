@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from email.utils import parsedate_to_datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from .agent import AgentError, AgentRunner
@@ -95,7 +96,15 @@ def _parser() -> argparse.ArgumentParser:
     source_check = source_commands.add_parser(
         "check", help="verifica uma fonte ativa sem guardar os registos recebidos"
     )
-    source_check.add_argument("source_id", help="identificador declarado no catálogo de fontes")
+    source_check.add_argument(
+        "source_id",
+        nargs="?",
+        help="identificador declarado no catálogo de fontes",
+    )
+    source_check.add_argument("--all-active", action="store_true")
+    source_check.add_argument("--json", action="store_true", dest="as_json")
+    source_check.add_argument("--summary-path", type=Path, default=None)
+    source_check.add_argument("--live-corpus-path", type=Path, default=None)
     source_check.add_argument("--query", default="", help="consulta opcional para a fonte")
     source_check.add_argument(
         "--limit", type=int, default=20, help="máximo de registos, entre 1 e 100"
@@ -269,6 +278,14 @@ def _source_list(registry_path: Path | None) -> int:
 
 
 def _source_check(args: argparse.Namespace) -> int:
+    if args.all_active:
+        if args.source_id is not None:
+            raise ValueError("Não indique source_id com --all-active.")
+        if not args.as_json:
+            raise ValueError("--all-active requer --json para evitar saída de conteúdo de origem.")
+        return _source_check_all(args)
+    if args.source_id is None:
+        raise ValueError("Indique source_id ou use --all-active.")
     if not 1 <= args.limit <= 100:
         raise ValueError("O limite tem de estar entre 1 e 100.")
     definition = next(
@@ -358,6 +375,166 @@ def _source_check(args: argparse.Namespace) -> int:
     print(f"Última atualização declarada pela fonte: {last_updated}.")
     print(f"Paginação: {result.pagination_state}.")
     return 0 if successful_http and rejected == 0 else 1
+
+
+def _source_check_all(args: argparse.Namespace) -> int:
+    if not 1 <= args.limit <= 100:
+        raise ValueError("O limite tem de estar entre 1 e 100.")
+    definitions = tuple(
+        item
+        for item in load_source_registry()
+        if item.enabled and item.status == "active" and item.adapter is not None
+    )
+    adapters = create_adapter_registry()
+    report_items: list[dict[str, Any]] = []
+    live_records: list[dict[str, Any]] = []
+
+    for definition in definitions:
+        started = perf_counter()
+        adapter = adapters.get(definition.source_id)
+        result: SourceFetchResult | None = None
+        normalized = []
+        parser_error: str | None = None
+        http_status: int | None = None
+        response_bytes: int | None = None
+        rows_received = 0
+        rows_rejected = 0
+        pagination_state = "not_determined"
+        payload_hashes: set[str] = set()
+        source_timestamps: set[str] = set()
+        if adapter is None:
+            parser_error = "adapter_not_registered"
+        else:
+            fetch_with_report = getattr(adapter, "fetch_with_report", None)
+            try:
+                if callable(fetch_with_report):
+                    result = fetch_with_report(args.query, limit=args.limit)
+                else:
+                    documents = adapter.fetch(args.query, limit=args.limit)
+                    result = SourceFetchResult(
+                        source_id=definition.source_id,
+                        documents=documents,
+                        http_status=200,
+                        response_bytes=sum(
+                            len(item.text.encode("utf-8")) for item in documents
+                        ),
+                        total_results=None,
+                        pagination_state=(
+                            "limit_reached_unknown"
+                            if len(documents) == args.limit
+                            else "unknown"
+                        ),
+                        rows_received=len(documents),
+                    )
+                http_status = result.http_status
+                response_bytes = result.response_bytes
+                rows_received = result.rows_received
+                rows_rejected = result.rejected_rows
+                pagination_state = result.pagination_state
+                for document in result.documents:
+                    if document.source_payload_sha256:
+                        payload_hashes.add(document.source_payload_sha256)
+                    if document.last_modified:
+                        source_timestamps.add(document.last_modified)
+                    try:
+                        opportunity = normalize_source_document(document)
+                    except (TypeError, ValueError):
+                        rows_rejected += 1
+                        continue
+                    normalized.append(opportunity)
+                    if opportunity.source_updated_at is not None:
+                        source_timestamps.add(opportunity.source_updated_at.isoformat())
+                    live_records.append(asdict(opportunity))
+            except SourceError as exc:
+                status = re.search(r"HTTP (\d{3})", str(exc))
+                http_status = int(status.group(1)) if status else None
+                parser_error = type(exc).__name__
+
+        successful_http = http_status is not None and 200 <= http_status < 300
+        schema_status = (
+            "invalid"
+            if parser_error is not None
+            else "partial"
+            if rows_rejected
+            else "valid"
+        )
+        parser_result = (
+            "failed"
+            if parser_error is not None
+            else "parsed"
+            if normalized
+            else "valid_empty"
+        )
+        elapsed_ms = round((perf_counter() - started) * 1000, 3)
+        report_items.append(
+            {
+                "source_id": definition.source_id,
+                "http_success": successful_http,
+                "http_status": http_status,
+                "response_bytes": response_bytes,
+                "rows_received": rows_received,
+                "rows_returned": len(result.documents) if result else 0,
+                "rows_accepted": len(normalized),
+                "rows_rejected": rows_rejected,
+                "pagination_state": pagination_state,
+                "schema_status": schema_status,
+                "source_timestamp": next(iter(source_timestamps))
+                if len(source_timestamps) == 1
+                else None,
+                "source_timestamps": sorted(source_timestamps),
+                "source_payload_sha256": sorted(payload_hashes),
+                "parser_result": parser_result,
+                "elapsed_ms": elapsed_ms,
+                "success": (
+                    successful_http
+                    and schema_status == "valid"
+                    and parser_result == "parsed"
+                ),
+                "error_code": parser_error,
+            }
+        )
+
+    all_succeeded = len(report_items) == len(definitions) and all(
+        item["success"] is True for item in report_items
+    )
+    provenance_counts: dict[str, int] = {}
+    for record in live_records:
+        for item in record.get("evidence", []):
+            status = str(item.get("provenance_status", "unknown"))
+            provenance_counts[status] = provenance_counts.get(status, 0) + 1
+    report: dict[str, Any] = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "active_sources": len(definitions),
+        "all_succeeded": all_succeeded,
+        "sources": report_items,
+        "live_corpus": {
+            "records_acquired": len(live_records),
+            "persistence": "optional local file; not uploaded by the workflow",
+            "evidence_provenance_counts": provenance_counts,
+        },
+    }
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n"
+    print(rendered, end="")
+    if args.summary_path is not None:
+        if args.summary_path.is_symlink():
+            raise ValueError("O caminho do resumo não pode ser uma ligação simbólica.")
+        args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_path.write_text(rendered, encoding="utf-8")
+    if args.live_corpus_path is not None:
+        if args.live_corpus_path.is_symlink():
+            raise ValueError("O caminho do corpus não pode ser uma ligação simbólica.")
+        corpus_payload = {
+            "schema_version": 1,
+            "captured_at": report["checked_at"],
+            "dataset": "LIVE CORPUS",
+            "records": live_records,
+        }
+        args.live_corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        args.live_corpus_path.write_text(
+            json.dumps(corpus_payload, ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+    return 0 if all_succeeded else 1
 
 
 def _discover(args: argparse.Namespace) -> int:

@@ -20,6 +20,11 @@
       "adapter": "funding_tenders",
       "legal_status": "terms_need_confirmation",
       "commercial_redistribution": false,
+      "source_family": "eu_direct_funding",
+      "source_role": "canonical",
+      "canonical_source": "eu_funding_tenders",
+      "authority_relationship": "canonical_programme_record",
+      "snapshot_policy": "hash_and_excerpt",
       "last_verified": "2026-10-06"
     },
     {
@@ -40,6 +45,11 @@
       "adapter": "ted_search",
       "legal_status": "documented_reuse",
       "commercial_redistribution": true,
+      "source_family": "eu_public_procurement",
+      "source_role": "publisher",
+      "canonical_source": "ted_eu_procurement",
+      "authority_relationship": "publisher_notice_record",
+      "snapshot_policy": "bounded_normalized",
       "last_verified": "2026-10-07"
     },
     {
@@ -80,6 +90,11 @@
       "adapter": "portugal2030_annual_plan_xlsx",
       "legal_status": "terms_need_confirmation",
       "commercial_redistribution": false,
+      "source_family": "portugal2030_forecast",
+      "source_role": "forecast",
+      "canonical_source": "portugal2030_annual_plan",
+      "authority_relationship": "annual_forecast_schedule",
+      "snapshot_policy": "hash_and_excerpt",
       "last_verified": "2026-10-07"
     },
     {
@@ -158,6 +173,11 @@
       "adapter": "cinea_life_html",
       "legal_status": "documented_reuse",
       "commercial_redistribution": true,
+      "source_family": "eu_direct_funding",
+      "source_role": "discovery",
+      "canonical_source": "eu_funding_tenders",
+      "authority_relationship": "agency_presentation_to_canonical_topic",
+      "snapshot_policy": "hash_and_excerpt",
       "last_verified": "2026-10-07"
     },
     {

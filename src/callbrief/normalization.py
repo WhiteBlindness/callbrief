@@ -114,6 +114,8 @@ _DECIMAL_FIELDS: dict[str, tuple[str, ...]] = {
         "budgetTotal",
         "totalBudget",
         "callBudget",
+        "dotação global",
+        "dotação global do aviso",
         "dotação fundo",
         "dotação do fundo",
     ),
@@ -525,6 +527,53 @@ def _eligibility_rules(
     return tuple(rules)
 
 
+def _structured_eligibility_rules(
+    document: SourceDocument,
+    record: dict[str, Any],
+    evidence: tuple[EvidenceReference, ...],
+    existing_rules: tuple[EligibilityRule, ...],
+) -> tuple[EligibilityRule, ...]:
+    existing_fields = {item.profile_field for item in existing_rules}
+    available_evidence = {item.evidence_id for item in evidence}
+    rules: list[EligibilityRule] = []
+    for aliases, profile_field, criteria_label in (
+        (
+            _LIST_FIELDS["eligible_applicant_types"],
+            "applicant_types",
+            "as entidades beneficiárias",
+        ),
+        (_LIST_FIELDS["eligible_regions"], "regions", "as regiões de candidatura"),
+        (
+            _LIST_FIELDS["eligible_company_sizes"],
+            "company_size",
+            "as dimensões de empresa elegíveis",
+        ),
+    ):
+        found = _lookup(record, aliases)
+        if found is None or profile_field in existing_fields:
+            continue
+        source_evidence = _field_evidence(document, found[0], found[1])
+        expected = _strings(record, aliases)
+        if (
+            source_evidence is None
+            or source_evidence.evidence_id not in available_evidence
+            or not expected
+        ):
+            continue
+        expected_label = "; ".join(expected)
+        rules.append(
+            EligibilityRule(
+                rule_id=f"source-field-{profile_field}",
+                profile_field=profile_field,
+                operator=RuleOperator.INTERSECTS,
+                expected=expected,
+                reason=f"A fonte indica {criteria_label}: {expected_label}.",
+                evidence_ids=(source_evidence.evidence_id,),
+            )
+        )
+    return tuple(rules)
+
+
 def normalize_source_document(document: SourceDocument) -> Opportunity:
     """Map fields with known names and types; leave unsupported facts unknown."""
     record = _record(document)
@@ -673,6 +722,10 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         if _has_evidence(document, record, _FIELD_ALIASES["source_updated_at"])
         else None
     )
+    explicit_rules = _eligibility_rules(document, record)
+    structured_rules = _structured_eligibility_rules(
+        document, record, tuple(evidence), explicit_rules
+    )
     return Opportunity(
         id=f"opp-{opportunity_id}",
         source_id=document.source_id,
@@ -756,11 +809,15 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         additional_deadlines=additional_deadlines,
         consortium_rules=consortium_rules,
         project_duration=project_duration,
-        eligibility_rules=_eligibility_rules(document, record),
+        eligibility_rules=(*explicit_rules, *structured_rules),
         source_updated_at=source_updated_at,
         source_retrieved_at=document.retrieved_at,
         last_checked_at=document.retrieved_at,
         raw_source_reference=document.source_url,
         evidence=tuple({item.evidence_id: item for item in evidence}.values()),
+        source_family=metadata.get("source_family"),
+        source_role=metadata.get("source_role"),
+        canonical_source=metadata.get("canonical_source"),
+        authority_relationship=metadata.get("authority_relationship"),
         **normalized_fields,
     )

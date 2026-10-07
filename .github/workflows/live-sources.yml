@@ -1,0 +1,32 @@
+name: Live source checks
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check-active-sources:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install CallBrief
+        run: python -m pip install .
+      - name: Check and normalize active sources
+        run: >-
+          callbrief source check --all-active --json --limit 20
+          --summary-path live-source-summary.json
+          --live-corpus-path "${{ runner.temp }}/callbrief-live-corpus.json"
+      - name: Upload compact source summary
+        if: always() && hashFiles('live-source-summary.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-source-summary
+          path: live-source-summary.json
+          if-no-files-found: error
+          retention-days: 7

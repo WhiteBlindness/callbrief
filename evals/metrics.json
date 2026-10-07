@@ -13,8 +13,9 @@
     "notes": [
       "Inclui 30 oportunidades reais consultadas em páginas oficiais de COMPETE 2030, Funding & Tenders e CINEA; os adaptadores não recolheram esta amostra.",
       "Os rótulos e excertos foram preparados numa única passagem, sem validação independente por uma segunda pessoa.",
-      "As páginas e ligações oficiais foram registadas, mas não foram guardadas as respostas integrais nem os respetivos hashes.",
-      "As verificações HTTP executadas nesta máquina falharam por falta de acesso de rede; as medições offline não demonstram disponibilidade em direto."
+      "Os 30 registos mantêm a proveniência MANUALLY_TRANSCRIBED e não foram recolhidos pelos adaptadores.",
+      "A avaliação contém 59 consultas: 19 para calibração e 40 para validação; a abstenção é calibrada apenas no subconjunto de desenvolvimento.",
+      "A matriz de reutilização é específica por fonte e por percurso; a redistribuição comercial fica desativada quando os termos não estão confirmados."
     ]
   },
   "metrics": [
@@ -39,29 +40,29 @@
     {
       "id": "normalization_available_field_accuracy",
       "definition": "Valores normalizados iguais divididos pelos campos disponíveis tanto no esperado como no observado. Valores ausentes ficam fora do cálculo.",
-      "measured_value": {"available": 85, "correct": 85, "wrong": 0, "unknown": 0, "score": 1.0},
+      "measured_value": {"available": 165, "correct": 165, "wrong": 0, "unknown": 0, "score": 1.0, "by_field": {"call_id": {"available": 30, "correct": 30}, "programme": {"available": 30, "correct": 30}, "title": {"available": 30, "correct": 30}, "status": {"available": 25, "correct": 25}, "opening_date": {"available": 19, "correct": 19}, "deadline": {"available": 30, "correct": 30}, "budget_total": {"available": 1, "correct": 1}, "authority": {"available": 0, "correct": 0}, "opportunity_type": {"available": 0, "correct": 0}, "geography": {"available": 0, "correct": 0}, "beneficiary_type": {"available": 0, "correct": 0}}},
       "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "30 títulos, 25 estados e 30 prazos disponíveis. Transcrição e avaliação numa única passagem, sem adjudicação independente. Reproduzível com python -m evals.real_corpus_benchmark."
+      "measurement_note": "Campos disponíveis: 30 identificadores, programas e títulos, 25 estados, 19 datas de abertura, 30 prazos e um montante. Autoridade, tipo, geografia e tipo de beneficiário não têm rótulos neste corpus. Transcrição e avaliação numa passagem, sem adjudicação independente."
     },
     {
       "id": "recall_at_5",
       "definition": "Identificadores de avisos relevantes nos primeiros cinco resultados, divididos pelo total de identificadores relevantes anotados.",
-      "measured_value": {"baseline_recall_at_5": 1.0, "current_recall_at_5": 1.0, "baseline_mrr_at_5": 1.0, "current_mrr_at_5": 1.0, "answerable_queries": 26, "queries": 27},
+      "measured_value": {"baseline_recall_at_5": 0.9117647058823529, "current_recall_at_5": 0.9117647058823529, "baseline_mrr_at_5": 0.875, "current_mrr_at_5": 0.875, "answerable_queries": 34, "held_out_queries": 40, "development_queries": 19, "total_queries": 59},
       "status": "measured_manual_single_pass",
       "target": 0.9,
       "requires_human_labels": true,
-      "measurement_note": "26 consultas respondíveis, incluindo montantes e prazos, e uma sem resposta, com rótulos manuais de passagem única. Não houve adjudicação independente. Tanto a referência como o algoritmo atual atingiram 1,00; não se mediu melhoria. A consulta sem resposta devolveu resultados."
+      "measurement_note": "Métricas de ordenação nas 34 consultas respondíveis do subconjunto de validação: 0,912 Recall@5 e 0,875 MRR@5, iguais à referência lexical anterior. A avaliação tem 59 consultas, com paráfrases, consultas bilingues e 12 consultas sem resposta repartidas entre calibração e validação. Rótulos manuais de passagem única, sem adjudicação independente."
     },
     {
       "id": "deduplication_precision",
       "definition": "Pares previstos como duplicados e confirmados, divididos por todos os pares previstos como duplicados.",
-      "measured_value": {"predicted": 0, "correct": 0, "precision": null, "recall": 0.0, "missed_duplicate_pairs": 5, "false_positive_pairs": 0, "labelled_pairs": 15},
-      "status": "measured_manual_pairs_no_predictions",
+      "measured_value": {"predicted": 5, "correct": 5, "precision": 1.0, "recall": 1.0, "missed_duplicate_pairs": 0, "false_positive_pairs": 0, "labelled_pairs": 16, "positive_pairs": 5, "negative_pairs": 11, "real_corpus_negative_pairs": 10, "fixture_negative_pairs": 1},
+      "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Cinco pares positivos CINEA/Funding & Tenders foram confirmados pelas ligações oficiais de espelho; dez pares negativos contêm avisos semelhantes. A normalização separada não encontra identificador comum nos registos CINEA: não prevê duplicados, falha os cinco positivos e não produz falsos positivos. A precisão é indefinida com zero previsões. Rótulos de passagem única, sem revisão independente."
+      "measurement_note": "Os cinco pares CINEA/Funding & Tenders partilham identificador oficial e programa; as páginas CINEA apontam para o registo canónico no Funding & Tenders. Dez pares negativos do corpus incluem títulos semelhantes, prazos diferentes e tópicos distintos; um décimo primeiro par fixture-only verifica chamadas anuais com identificadores distintos. Correspondência exata automática; resultados prováveis e possíveis ficam para revisão. Rótulos de passagem única, sem adjudicação independente."
     },
     {
       "id": "deterministic_eligibility_accuracy",
@@ -75,11 +76,11 @@
     {
       "id": "citation_validity",
       "definition": "Identificadores de citações que apontam para evidência fornecida, divididos por todas as citações produzidas.",
-      "measured_value": {"cited_facts": 85, "valid_exact_excerpt_spans": 85, "score": 1.0, "official_payload_hashes_missing": 30},
-      "status": "measured_fixture_excerpt_structure",
+      "measured_value": {"cited_facts": 165, "valid_exact_excerpt_spans": 165, "score": 1.0, "official_payload_hashes_missing": 30, "provenance_counts": {"MANUALLY_TRANSCRIBED": 165}},
+      "status": "measured_manual_excerpt_structure",
       "target": 1.0,
       "requires_human_labels": false,
-      "measurement_note": "Os 85 factos normalizados apontam para excertos exatos na amostra local e para a ligação oficial registada. Não há resumos criptográficos das respostas oficiais arquivadas, por isso esta medida não valida as páginas originais nem a semântica dos excertos."
+      "measurement_note": "Os 165 factos apontam para excertos exatos e ligações registadas no corpus manual. Nenhum dos 30 registos de avaliação tem hash de resposta original; a proveniência não equivale a aquisição automática. As respostas das fontes ativas são agora resumidas com SHA-256 durante a verificação ao vivo, sem conservar corpos protegidos."
     },
     {
       "id": "source_qualification_evidence",
@@ -120,20 +121,56 @@
     {
       "id": "retrieval_no_answer_false_positive_rate",
       "definition": "Consultas sem avisos relevantes anotados que ainda recebem resultados, dividido por todas as consultas sem resposta.",
-      "measured_value": {"baseline": 1.0, "current": 1.0, "false_positives": 1, "no_answer_queries": 1},
+      "measured_value": {"baseline_no_answer_precision": 0.6666666666666666, "baseline_no_answer_recall": 0.3333333333333333, "current_no_answer_precision": 0.5555555555555556, "current_no_answer_recall": 0.8333333333333334, "current_no_answer_miss_rate": 0.16666666666666666, "answerable_abstention_rate": 0.11764705882352941, "held_out_no_answer_queries": 6, "total_no_answer_queries": 12, "confidence_threshold": 0.290165, "calibrated_on": "development partition only"},
       "status": "measured_manual_single_pass",
       "target": 0.0,
       "requires_human_labels": true,
-      "measurement_note": "Uma consulta sem resposta teve resultados nos dois algoritmos. É uma limitação de abstenção a resolver; o conjunto de uma consulta não permite estimar a taxa em produção."
+      "measurement_note": "O limiar determinístico foi escolhido no subconjunto de desenvolvimento para maximizar a exactidão equilibrada. Nos seis casos sem resposta retidos para validação, a precisão da abstenção foi 0,556 e a sensibilidade 0,833; 11,8% das consultas respondíveis também foram recusadas. Os 12 casos sem resposta são um conjunto pequeno, com rótulos manuais."
     },
     {
       "id": "live_source_check_success_count",
       "definition": "Consultas HTTP de verificação de fonte concluídas com uma resposta interpretável nesta máquina.",
-      "measured_value": {"successful": 0, "attempted": 4},
-      "status": "blocked_by_environment_network",
+      "measured_value": null,
+      "status": "awaiting_manual_workflow_dispatch",
       "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "As quatro fontes ativas devolveram URLError antes de receber estado HTTP ou bytes. A disponibilidade não foi validada em execução neste ambiente."
+      "measurement_note": "A validação automática decorre no workflow manual do GitHub Actions, que usa um agente GitHub-hosted e falha se qualquer fonte ativa não produzir registos válidos. A contagem só será atualizada após executar esse workflow."
+    },
+    {
+      "id": "source_supported_eligibility_examples",
+      "definition": "Exemplos em que campos explícitos do Plano Anual Portugal 2030 sustentam uma decisão determinística de tipo de entidade.",
+      "measured_value": {"eligible": 1, "ineligible": 2, "uncertain": 1, "remediable": 0, "profiles": 4, "source": "MANUALLY_TRANSCRIBED", "evidence_fields": ["Tipo Ent. Beneficiária", "NUTS II"]},
+      "status": "measured_manual_source_fields",
+      "target": {"evidence_required_for_each_decision": true},
+      "requires_human_labels": false,
+      "measurement_note": "A linha Formação Empresarial Individual declara entidade beneficiária Privada e região RAM. Um perfil privado na RAM cumpre as duas regras; um perfil público na RAM falha o tipo de entidade; um perfil privado no Alentejo falha a região; um perfil privado sem região permanece incerto. A fonte não dá base para classificar um caso como remediável. São previsões e não confirmação de abertura."
+    },
+    {
+      "id": "portugal2030_eligibility_field_normalization",
+      "definition": "Campos de tipo de entidade beneficiária e região normalizados a partir de linhas do Plano Anual e comparados com a transcrição de referência.",
+      "measured_value": {"eligible_applicant_types": {"available": 2, "correct": 2, "valid_exact_excerpt_spans": 2}, "eligible_regions": {"available": 2, "correct": 2, "valid_exact_excerpt_spans": 2}, "provenance": "MANUALLY_TRANSCRIBED"},
+      "status": "measured_manual_source_fields",
+      "target": 1.0,
+      "requires_human_labels": true,
+      "measurement_note": "Dois exemplos por campo, com excerto exato e ligação ao ficheiro. A página oficial agrupa estes filtros sob «Quem se pode candidatar?» e «Onde se pode candidatar?». Transcrição sem adjudicação independente; redistribuição comercial continua desativada."
+    },
+    {
+      "id": "source_format_change_tracking_contract",
+      "definition": "Deteção de alterações de prazo, estado e documentos entre duas capturas controladas no formato da fonte.",
+      "measured_value": {"fields_changed": ["deadline", "status", "documents"], "events_detected": 3, "source": "Funding & Tenders JSON fixtures"},
+      "status": "measured_controlled_fixture",
+      "target": 1.0,
+      "requires_human_labels": false,
+      "measurement_note": "Teste controlado com duas capturas em formato JSON da fonte; não representa alteração observada ao vivo."
+    },
+    {
+      "id": "agent_reach_contract",
+      "definition": "Verificação da interface de integração Agent-Reach para normalizar páginas oficiais em oportunidades CallBrief.",
+      "measured_value": {"contract_tests": "passed", "cloud_service_available": false},
+      "status": "contract_tested_local_smoke_pending",
+      "target": "owner local Agent-Reach bridge smoke test",
+      "requires_human_labels": false,
+      "measurement_note": "O serviço Agent-Reach não está disponível no ambiente de nuvem. O contrato é testado com um serviço falso; a integração local real continua pendente."
     },
     {
       "id": "synthetic_retrieval_recall_at_5",

@@ -175,26 +175,35 @@ class EvaluationMetricsTests(unittest.TestCase):
         )
         self.assertEqual(
             metrics["normalization_available_field_accuracy"]["measured_value"]["available"],
-            85,
+            165,
         )
+        specific_normalization = metrics["portugal2030_eligibility_field_normalization"][
+            "measured_value"
+        ]
+        self.assertEqual(specific_normalization["eligible_applicant_types"]["correct"], 2)
+        self.assertEqual(specific_normalization["eligible_regions"]["correct"], 2)
         self.assertEqual(
             metrics["recall_at_5"]["measured_value"]["current_recall_at_5"],
-            1.0,
+            0.9117647058823529,
         )
-        self.assertEqual(metrics["recall_at_5"]["measured_value"]["queries"], 27)
-        self.assertIsNone(metrics["deduplication_precision"]["measured_value"]["precision"])
-        self.assertEqual(metrics["deduplication_precision"]["measured_value"]["recall"], 0.0)
+        self.assertEqual(metrics["recall_at_5"]["measured_value"]["total_queries"], 59)
+        self.assertEqual(
+            metrics["deduplication_precision"]["measured_value"]["precision"], 1.0
+        )
+        self.assertEqual(metrics["deduplication_precision"]["measured_value"]["recall"], 1.0)
         self.assertEqual(
             metrics["citation_validity"]["measured_value"]["valid_exact_excerpt_spans"],
-            85,
+            165,
         )
         self.assertEqual(
             metrics["source_qualification_evidence"]["measured_value"]["preserved_on_opportunity"],
             1,
         )
         self.assertEqual(
-            metrics["retrieval_no_answer_false_positive_rate"]["measured_value"]["current"],
-            1.0,
+            metrics["retrieval_no_answer_false_positive_rate"]["measured_value"][
+                "current_no_answer_miss_rate"
+            ],
+            0.16666666666666666,
         )
         self.assertEqual(
             metrics["synthetic_retrieval_recall_at_5"]["measured_value"]["baseline"],
@@ -217,23 +226,36 @@ class EvaluationMetricsTests(unittest.TestCase):
                 "closed": 5,
             },
         )
-        self.assertEqual(report["retrieval"]["queries_total"], 27)
-        self.assertEqual(report["retrieval"]["answerable_queries"], 26)
-        self.assertEqual(report["retrieval"]["baseline"]["recall_at_5"], 1.0)
-        self.assertEqual(report["retrieval"]["current"]["recall_at_5"], 1.0)
-        self.assertEqual(report["retrieval"]["query_latency_ms"]["queries_measured"], 27)
+        self.assertEqual(report["retrieval"]["queries_total"], 59)
+        self.assertEqual(report["retrieval"]["development_queries"], 19)
+        self.assertEqual(report["retrieval"]["no_answer_queries"], 6)
+        self.assertEqual(report["retrieval"]["baseline"]["recall_at_5"], 0.9117647058823529)
+        self.assertEqual(report["retrieval"]["current"]["recall_at_5"], 0.9117647058823529)
+        self.assertEqual(report["retrieval"]["query_latency_ms"]["queries_measured"], 40)
         self.assertGreaterEqual(report["retrieval"]["query_latency_ms"]["current_mean"], 0.0)
         dataset = json.loads((ROOT / "evals" / "real_opportunities.json").read_text("utf-8"))
         categories = {item["category"] for item in dataset["queries"]}
         self.assertIn("funding size", categories)
         self.assertIn("deadline", categories)
-        self.assertEqual(report["retrieval"]["current"]["no_answer_false_positive_rate"], 1.0)
-        self.assertEqual(report["normalization"]["available"], 85)
-        self.assertEqual(report["normalization"]["correct"], 85)
-        self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 85)
+        no_answer_queries = [item for item in dataset["queries"] if not item["relevant_ids"]]
+        self.assertEqual(len(no_answer_queries), 12)
+        self.assertTrue(all(item.get("no_answer_reason") for item in no_answer_queries))
+        titles = [record["title"].casefold() for record in dataset["records"]]
+        self.assertFalse(
+            any(
+                title in query["query"].casefold()
+                for title in titles
+                for query in dataset["queries"]
+            )
+        )
+        self.assertEqual(report["retrieval"]["no_answer_queries"], 6)
+        self.assertEqual(report["retrieval"]["abstention"]["no_answer_recall"], 5 / 6)
+        self.assertEqual(report["normalization"]["available"], 165)
+        self.assertEqual(report["normalization"]["correct"], 165)
+        self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 165)
         self.assertEqual(
             report["normalization"]["citation_structure"]["valid_exact_excerpt_spans"],
-            85,
+            165,
         )
         qualification_evidence = report["normalization"]["source_qualifications"]
         self.assertEqual(qualification_evidence["available"], 1)
@@ -249,11 +271,29 @@ class EvaluationMetricsTests(unittest.TestCase):
             qualification["evidence_location"],
             "PDF da republicação de 30/09/2026, página 1, secção «Republicação»",
         )
-        self.assertEqual(report["deduplication"]["labelled_pairs"], 15)
-        self.assertIsNone(report["deduplication"]["precision"])
-        self.assertEqual(report["deduplication"]["recall"], 0.0)
-        self.assertEqual(report["deduplication"]["missed_duplicate_pairs"], 5)
+        self.assertEqual(report["deduplication"]["labelled_pairs"], 16)
+        self.assertEqual(report["deduplication"]["precision"], 1.0)
+        self.assertEqual(report["deduplication"]["recall"], 1.0)
+        self.assertEqual(report["deduplication"]["missed_duplicate_pairs"], 0)
+        self.assertEqual(len(report["deduplication"]["original_five_pair_results"]), 5)
+        annual_pair = next(
+            item
+            for item in report["deduplication"]["negative_pair_results"]
+            if item["case"] == "recurring_annual_call_new_identifier"
+        )
+        self.assertTrue(annual_pair["fixture_only"])
+        self.assertEqual(annual_pair["result"], "none")
         self.assertTrue(report["multi_client_demo"]["no_cross_workspace_result"])
+        self.assertEqual(
+            {item["eligibility"] for item in report["multi_client_demo"]["assessments"]},
+            {"eligible", "ineligible", "uncertain"},
+        )
+        self.assertEqual(report["multi_client_demo"]["profiles"], 4)
+        source_fields = report["multi_client_demo"]["source_specific_normalization"]["fields"]
+        self.assertEqual(source_fields["eligible_applicant_types"]["correct"], 2)
+        self.assertEqual(source_fields["eligible_regions"]["correct"], 2)
+        self.assertEqual(source_fields["eligible_regions"]["valid_exact_excerpt_spans"], 2)
+        self.assertFalse(report["multi_client_demo"]["remediable_example"]["supported_by_source"])
         self.assertEqual(report["network_requests"], 0)
 
 

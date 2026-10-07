@@ -21,7 +21,7 @@ from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
-from .domain import SourceDocument
+from .domain import EvidenceProvenance, SourceDocument
 
 REGISTRY_PATH = Path(__file__).with_name("data") / "source_registry.json"
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
@@ -56,6 +56,8 @@ class HttpJsonResponse:
     status_code: int
     response_bytes: int
     last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,6 +66,8 @@ class HttpTextResponse:
     status_code: int
     response_bytes: int
     last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +76,8 @@ class HttpBinaryResponse:
     status_code: int
     response_bytes: int
     last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +112,11 @@ class SourceDefinition:
     adapter: str | None = None
     legal_status: str = "policy_unverified"
     commercial_redistribution: bool = False
+    source_family: str | None = None
+    source_role: str | None = None
+    canonical_source: str | None = None
+    authority_relationship: str | None = None
+    snapshot_policy: str = "hash_and_excerpt"
 
     def __post_init__(self) -> None:
         if not self.source_id or len(self.source_id) > 100:
@@ -164,6 +175,14 @@ class SourceDefinition:
             raise SourceError("commercial_redistribution must be a boolean")
         if self.commercial_redistribution and self.legal_status != "documented_reuse":
             raise SourceError("Commercial redistribution needs documented reuse terms")
+        if self.source_role not in {None, "canonical", "discovery", "forecast", "publisher"}:
+            raise SourceError("Unsupported source role")
+        if self.snapshot_policy not in {"hash_and_excerpt", "bounded_normalized"}:
+            raise SourceError("Unsupported source snapshot policy")
+        for name in ("source_family", "canonical_source", "authority_relationship"):
+            value = getattr(self, name)
+            if value is not None and (not value.strip() or len(value) > 100):
+                raise SourceError(f"{name} must be a short non-empty string or unknown")
 
 
 def load_source_registry(path: Path = REGISTRY_PATH) -> tuple[SourceDefinition, ...]:
@@ -205,6 +224,23 @@ def load_source_registry(path: Path = REGISTRY_PATH) -> tuple[SourceDefinition, 
     return tuple(definitions)
 
 
+def _source_context_metadata(source_id: str) -> tuple[tuple[str, str], ...]:
+    registry_source_id = "cinea" if source_id == "cinea_life" else source_id
+    definition = next(
+        (item for item in load_source_registry() if item.source_id == registry_source_id), None
+    )
+    if definition is None:
+        return ()
+    values = (
+        ("source_family", definition.source_family),
+        ("source_role", definition.source_role),
+        ("canonical_source", definition.canonical_source),
+        ("authority_relationship", definition.authority_relationship),
+        ("snapshot_policy", definition.snapshot_policy),
+    )
+    return tuple((name, value) for name, value in values if value is not None)
+
+
 JsonTransport = Callable[[str, Mapping[str, str], Mapping[str, object], float], object]
 TextTransport = Callable[[str, float], object]
 BinaryTransport = Callable[[str, float], object]
@@ -239,7 +275,14 @@ def _post_json(
         value = json.loads(body.decode("utf-8"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SourceError("Source API returned invalid JSON") from exc
-    return HttpJsonResponse(value, status_code, len(body), last_modified)
+    return HttpJsonResponse(
+        value,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
 
 
 def _result_rows(response: object) -> list[Mapping[str, object]]:
@@ -279,14 +322,23 @@ def _total_results(response: object) -> int | None:
     return None
 
 
-def _response_details(response: object) -> tuple[object, int, int, str | None]:
+def _response_details(
+    response: object,
+) -> tuple[object, int, int, str | None, str | None, EvidenceProvenance]:
     if isinstance(response, HttpJsonResponse):
-        return response.body, response.status_code, response.response_bytes, response.last_modified
+        return (
+            response.body,
+            response.status_code,
+            response.response_bytes,
+            response.last_modified,
+            response.source_payload_sha256,
+            response.provenance_status,
+        )
     try:
         response_bytes = len(json.dumps(response, ensure_ascii=False).encode("utf-8"))
     except (TypeError, ValueError):
         response_bytes = 0
-    return response, 200, response_bytes, None
+    return response, 200, response_bytes, None, None, EvidenceProvenance.CAPTURED_FIXTURE
 
 
 def _get_html(endpoint: str, timeout_seconds: float) -> HttpTextResponse:
@@ -311,7 +363,14 @@ def _get_html(endpoint: str, timeout_seconds: float) -> HttpTextResponse:
         value = body.decode(charset)
     except (LookupError, UnicodeDecodeError):
         raise SourceError("Source page returned invalid text") from None
-    return HttpTextResponse(value, status_code, len(body), last_modified)
+    return HttpTextResponse(
+        value,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
 
 
 def _get_binary(endpoint: str, timeout_seconds: float) -> HttpBinaryResponse:
@@ -353,7 +412,14 @@ def _get_binary(endpoint: str, timeout_seconds: float) -> HttpBinaryResponse:
         "application/vnd.ms-excel",
     }:
         raise SourceError("Source file returned an unexpected content type")
-    return HttpBinaryResponse(body, status_code, len(body), last_modified)
+    return HttpBinaryResponse(
+        body,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
 
 
 def _binary_response_details(response: object) -> HttpBinaryResponse:
@@ -574,12 +640,29 @@ def _annual_plan_header_indexes(header: tuple[str, ...]) -> tuple[int, int, int]
     return indexes[0], indexes[1], indexes[2]
 
 
-def _html_response_details(response: object) -> tuple[str, int, int, str | None]:
+def _html_response_details(
+    response: object,
+) -> tuple[str, int, int, str | None, str | None, EvidenceProvenance]:
     if isinstance(response, HttpTextResponse):
-        return response.body, response.status_code, response.response_bytes, response.last_modified
+        return (
+            response.body,
+            response.status_code,
+            response.response_bytes,
+            response.last_modified,
+            response.source_payload_sha256,
+            response.provenance_status,
+        )
     if not isinstance(response, str):
         raise SourceError("Source page returned an unexpected response")
-    return response, 200, len(response.encode("utf-8")), None
+    body = response.encode("utf-8")
+    return (
+        response,
+        200,
+        len(body),
+        None,
+        None,
+        EvidenceProvenance.CAPTURED_FIXTURE,
+    )
 
 
 def _source_metadata(total: int | None, returned: int, limit: int) -> tuple[tuple[str, str], ...]:
@@ -741,7 +824,14 @@ class CineaLifeAdapter:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         response = self._transport(self.endpoint, self.timeout_seconds)
-        html, http_status, response_bytes, last_modified = _html_response_details(response)
+        (
+            html,
+            http_status,
+            response_bytes,
+            last_modified,
+            payload_hash,
+            provenance,
+        ) = _html_response_details(response)
         parser = _VisibleTextParser()
         try:
             parser.feed(html)
@@ -797,10 +887,12 @@ class CineaLifeAdapter:
                         ("title", title[:300]),
                         ("deadline", match.group(1)),
                         ("programme", "LIFE"),
-                        ("source_page_sha256", hashlib.sha256(html.encode("utf-8")).hexdigest()),
+                        *(_source_context_metadata(self.source_id)),
                     ),
                     discovered_links=(detail_url,),
                     last_modified=last_modified,
+                    provenance_status=provenance,
+                    source_payload_sha256=payload_hash,
                 )
             )
             if len(documents) >= limit:
@@ -890,7 +982,14 @@ class FundingTendersAdapter:
             {"bool": {"must": [{"terms": {"status": ["31094501", "31094502", "31094503"]}}]}},
             self.timeout_seconds,
         )
-        response, http_status, response_bytes, last_modified = _response_details(transport_response)
+        (
+            response,
+            http_status,
+            response_bytes,
+            last_modified,
+            payload_hash,
+            provenance,
+        ) = _response_details(transport_response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -931,15 +1030,18 @@ class FundingTendersAdapter:
                     retrieved_at=retrieved_at,
                     content_type="application/json",
                     title=title,
-                    text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
-                    metadata=(
-                        ("record_id", record_id),
-                        *_source_metadata(total, min(len(rows), limit), limit),
-                        *scalar_metadata[:96],
-                    ),
-                    discovered_links=links,
-                    last_modified=last_modified,
-                )
+                text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                metadata=(
+                    ("record_id", record_id),
+                    *_source_metadata(total, min(len(rows), limit), limit),
+                    *scalar_metadata[:96],
+                    *_source_context_metadata(self.source_id),
+                ),
+                discovered_links=links,
+                last_modified=last_modified,
+                provenance_status=provenance,
+                source_payload_sha256=payload_hash,
+            )
             )
         returned = len(documents)
         pagination = dict(_source_metadata(total, returned, limit))["source_pagination_state"]
@@ -1006,7 +1108,14 @@ class TedSearchAdapter:
             },
             self.timeout_seconds,
         )
-        response, http_status, response_bytes, last_modified = _response_details(transport_response)
+        (
+            response,
+            http_status,
+            response_bytes,
+            last_modified,
+            payload_hash,
+            provenance,
+        ) = _response_details(transport_response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -1039,9 +1148,19 @@ class TedSearchAdapter:
                         ("record_id", record_id),
                         *_source_metadata(total, min(len(rows), limit), limit),
                         ("publication_number", record_id),
+                        *_source_context_metadata(self.source_id),
                     ),
                     discovered_links=links,
                     last_modified=last_modified,
+                    provenance_status=provenance,
+                    source_payload_sha256=payload_hash,
+                    normalized_snapshot=(
+                        json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2)
+                        if dict(_source_context_metadata(self.source_id)).get("snapshot_policy")
+                        == "bounded_normalized"
+                        and len(json.dumps(record, ensure_ascii=False).encode("utf-8")) <= 16 * 1024
+                        else None
+                    ),
                 )
             )
         pagination = dict(_source_metadata(total, len(documents), limit))["source_pagination_state"]
@@ -1152,9 +1271,12 @@ class Portugal2030AnnualPlanAdapter:
                     ("record_id", record_id),
                     ("source_payload_sha256", workbook_hash),
                     ("forecast_only", "true"),
+                    *_source_context_metadata(self.source_id),
                 ),
                 discovered_links=(self.listing_url,),
                 last_modified=response.last_modified,
+                provenance_status=response.provenance_status,
+                source_payload_sha256=workbook_hash,
             )
             for record_id, title, record in matched_rows[:limit]
         )
@@ -1185,6 +1307,8 @@ class AgentReachPage:
     retrieved_at: datetime | None = None
     etag: str | None = None
     last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
 
 
 class AgentReachBridge(Protocol):
@@ -1248,6 +1372,8 @@ class AgentReachSourceAdapter:
                     discovered_links=links,
                     etag=page.etag,
                     last_modified=page.last_modified,
+                    source_payload_sha256=page.source_payload_sha256,
+                    provenance_status=page.provenance_status,
                 )
             )
             if len(documents) >= limit:

@@ -20,6 +20,84 @@ NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
 
 class NormalizationTests(unittest.TestCase):
+    def test_structured_applicant_type_rule_uses_the_source_field_evidence(self) -> None:
+        record = {
+            "id": "2026-0001",
+            "title": "Support for private companies",
+            "programme": "Regional programme",
+            "tipo ent. beneficiária": ["Privada"],
+        }
+        document = SourceDocument(
+            source_id="portugal2030_annual_plan",
+            source_url="https://portugal2030.pt/plan.xlsx",
+            retrieved_at=NOW,
+            content_type="application/json",
+            title=record["title"],
+            text=json.dumps(record, ensure_ascii=False),
+        )
+
+        opportunity = normalize_source_document(document)
+        private = OrganisationProfile(
+            id="private", workspace_id="consultancy", applicant_types=("Privada",)
+        )
+        public = OrganisationProfile(
+            id="public", workspace_id="consultancy", applicant_types=("Pública",)
+        )
+
+        self.assertEqual(opportunity.eligible_applicant_types, ("Privada",))
+        self.assertEqual(len(opportunity.eligibility_rules), 1)
+        rule = opportunity.eligibility_rules[0]
+        self.assertTrue(rule.evidence_ids)
+        self.assertEqual(
+            assess_eligibility(opportunity, private, assessed_at=NOW).state,
+            EligibilityState.ELIGIBLE,
+        )
+        self.assertEqual(
+            assess_eligibility(opportunity, public, assessed_at=NOW).state,
+            EligibilityState.INELIGIBLE,
+        )
+
+    def test_structured_portugal2030_region_rule_uses_the_source_field_evidence(self) -> None:
+        record = {
+            "id": "annual-plan-region-1",
+            "title": "Apoio regional",
+            "programme": "Portugal 2030",
+            "NUTS II": ["RAM"],
+        }
+        text = json.dumps(record, ensure_ascii=False)
+        document = SourceDocument(
+            source_id="portugal2030_annual_plan",
+            source_url="https://portugal2030.pt/plan.xlsx",
+            retrieved_at=NOW,
+            content_type="application/json",
+            title=record["title"],
+            text=text,
+        )
+
+        opportunity = normalize_source_document(document)
+        in_region = OrganisationProfile(
+            id="in-region", workspace_id="consultancy", regions=("RAM",)
+        )
+        outside_region = OrganisationProfile(
+            id="outside-region", workspace_id="consultancy", regions=("Alentejo",)
+        )
+
+        self.assertEqual(opportunity.eligible_regions, ("RAM",))
+        self.assertEqual(len(opportunity.eligibility_rules), 1)
+        rule = opportunity.eligibility_rules[0]
+        self.assertEqual(rule.profile_field, "regions")
+        self.assertTrue(rule.evidence_ids)
+        evidence = {item.evidence_id: item for item in opportunity.evidence}
+        self.assertIn("NUTS II", evidence[rule.evidence_ids[0]].section or "")
+        self.assertEqual(
+            assess_eligibility(opportunity, in_region, assessed_at=NOW).state,
+            EligibilityState.ELIGIBLE,
+        )
+        self.assertEqual(
+            assess_eligibility(opportunity, outside_region, assessed_at=NOW).state,
+            EligibilityState.INELIGIBLE,
+        )
+
     def test_normalizes_supported_values_and_attaches_exact_source_evidence(self) -> None:
         record = {
             "id": "topic-2026-1",
