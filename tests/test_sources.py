@@ -1,13 +1,25 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import unittest
-from datetime import UTC
+from datetime import UTC, datetime
+from io import BytesIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from callbrief.domain import SourceDocument
+from callbrief.normalization import normalize_source_document
 from callbrief.sources import (
+    AgentReachPage,
+    AgentReachSourceAdapter,
+    CineaLifeAdapter,
     FundingTendersAdapter,
+    HttpBinaryResponse,
+    HttpTextResponse,
+    Portugal2030AnnualPlanAdapter,
     SourceAdapter,
     SourceError,
+    TedSearchAdapter,
     create_adapter_registry,
     load_source_registry,
 )
@@ -33,6 +45,73 @@ FIXTURE_RESPONSE: dict[str, object] = {
         },
     ],
 }
+
+
+def _annual_plan_xlsx() -> bytes:
+    values = [
+        "ID",
+        "Tipo Ent. Beneficiária",
+        "Natureza Aviso",
+        "Designacao do Aviso",
+        "Programa",
+        "Objetivo Específico",
+        "Fundo",
+        "Dotação Fundo",
+        "Data Inicio Prevista",
+        "Data Fim Prevista",
+        "Quadrimestre",
+        "NUTS II",
+        "Modalidade Apresentação Candidatura",
+        "2026-0001",
+        "Privada | Pública",
+        "Concurso",
+        "Descarbonização de PME",
+        "COMPETE 2030",
+        "RSO2.1",
+        "FEDER",
+        "1 500 000 €",
+        "15/10/2099",
+        "30/11/2099",
+        "Q4",
+        "Norte",
+        "Individual",
+    ]
+    strings = "".join(f"<si><t>{value}</t></si>" for value in values)
+    rows = []
+    index = 0
+    for row_number, count in ((1, 13), (2, 13)):
+        cells = []
+        for column in range(1, count + 1):
+            column_name = chr(ord("A") + column - 1)
+            cells.append(
+                f'<c r="{column_name}{row_number}" t="s"><v>{index}</v></c>'
+            )
+            index += 1
+        rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
+    payload = BytesIO()
+    with ZipFile(payload, "w", ZIP_DEFLATED) as workbook:
+        workbook.writestr(
+            "xl/sharedStrings.xml",
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f"{strings}</sst>",
+        )
+        workbook.writestr(
+            "xl/worksheets/sheet1.xml",
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            f'<sheetData>{"".join(rows)}</sheetData></worksheet>',
+        )
+    return payload.getvalue()
+
+
+def _replace_xlsx_member(payload: bytes, name: str, old: bytes, new: bytes) -> bytes:
+    rewritten = BytesIO()
+    with ZipFile(BytesIO(payload)) as source, ZipFile(rewritten, "w", ZIP_DEFLATED) as target:
+        for member in source.namelist():
+            contents = source.read(member)
+            if member == name:
+                contents = contents.replace(old, new, 1)
+            target.writestr(member, contents)
+    return rewritten.getvalue()
 
 
 class SourceAdapterTests(unittest.TestCase):
@@ -62,12 +141,28 @@ class SourceAdapterTests(unittest.TestCase):
             [
                 (
                     FundingTendersAdapter.endpoint,
-                    {"apiKey": "SEDIA", "text": "digital", "pageSize": "2", "language": "en"},
-                    {"bool": {"must": []}},
+                    {
+                        "apiKey": "SEDIA",
+                        "text": "digital",
+                        "pageSize": "2",
+                        "pageNumber": "1",
+                        "language": "en",
+                    },
+                    {
+                        "bool": {
+                            "must": [
+                                {"terms": {"status": ["31094501", "31094502", "31094503"]}}
+                            ]
+                        }
+                    },
                     20,
                 )
             ],
         )
+        report = adapter.fetch_with_report("digital", limit=2)
+        self.assertEqual(report.http_status, 200)
+        self.assertEqual(report.total_results, 2)
+        self.assertEqual(report.pagination_state, "complete")
 
     def test_adapter_rejects_invalid_query_and_limit_before_transport(self) -> None:
         def unexpected_transport(*_args):
@@ -82,26 +177,322 @@ class SourceAdapterTests(unittest.TestCase):
             adapter.fetch(limit=101)
 
     def test_adapter_rejects_invalid_response_shape(self) -> None:
-        adapter = FundingTendersAdapter(transport=lambda *_: {"results": "invalid"})
-        with self.assertRaisesRegex(SourceError, "results list"):
-            adapter.fetch()
+        for response, message in (
+            ({"results": "invalid"}, "results list"),
+            ({"unexpected_schema": []}, "recognized results list"),
+            ({"results": {"unexpected_schema": []}}, "nested results wrapper"),
+        ):
+            with self.subTest(response=response):
+                adapter = FundingTendersAdapter(transport=lambda *_: response)
+                with self.assertRaisesRegex(SourceError, message):
+                    adapter.fetch()
+
+        empty_adapter = FundingTendersAdapter(transport=lambda *_: {"results": []})
+        self.assertEqual(empty_adapter.fetch(), ())
 
     def test_registry_marks_unverified_sources_inactive(self) -> None:
         registry = {item.source_id: item for item in load_source_registry()}
         self.assertEqual(registry["eu_funding_tenders"].status, "active")
+        self.assertEqual(registry["ted_eu_procurement"].status, "active")
+        self.assertEqual(registry["cinea"].status, "active")
+        self.assertEqual(registry["portugal2030_annual_plan"].status, "active")
+        self.assertEqual(
+            registry["portugal2030_annual_plan"].legal_status,
+            "terms_need_confirmation",
+        )
+        self.assertFalse(registry["portugal2030_annual_plan"].commercial_redistribution)
         self.assertEqual(registry["compete2030"].status, "pending_policy")
         self.assertEqual(registry["portugal2030"].status, "pending_policy")
+        self.assertEqual(
+            registry["portugal2030_annual_plan"].legal_status,
+            "terms_need_confirmation",
+        )
         self.assertEqual(registry["pt2030_open_dataset"].status, "pending_policy")
+        self.assertFalse(registry["pt2030_open_dataset"].commercial_redistribution)
         self.assertEqual(registry["cordis"].status, "discovery_only")
-        self.assertEqual(registry["cinea"].status, "discovery_only")
         self.assertIn("autorização", registry["compete2030"].legal_notes.casefold())
         self.assertIn("licença", registry["pt2030_open_dataset"].legal_notes.casefold())
         self.assertGreaterEqual(len(registry), 20)
 
-    def test_adapter_registry_only_constructs_verified_source(self) -> None:
+    def test_adapter_registry_only_constructs_verified_sources(self) -> None:
         adapter_map = create_adapter_registry(transport=lambda *_: FIXTURE_RESPONSE)
-        self.assertEqual(set(adapter_map), {"eu_funding_tenders"})
+        self.assertEqual(
+            set(adapter_map),
+            {
+                "eu_funding_tenders",
+                "ted_eu_procurement",
+                "cinea",
+                "portugal2030_annual_plan",
+            },
+        )
         self.assertIsInstance(adapter_map["eu_funding_tenders"], SourceAdapter)
+        self.assertIsInstance(adapter_map["ted_eu_procurement"], SourceAdapter)
+        self.assertIsInstance(adapter_map["cinea"], SourceAdapter)
+        self.assertIsInstance(adapter_map["portugal2030_annual_plan"], SourceAdapter)
+
+    def test_portugal2030_annual_plan_maps_forecast_rows_with_cell_evidence(self) -> None:
+        payload = _annual_plan_xlsx()
+        adapter = Portugal2030AnnualPlanAdapter(
+            transport=lambda *_: HttpBinaryResponse(
+                payload, 200, len(payload), "Tue, 06 Oct 2026 10:00:00 GMT"
+            )
+        )
+
+        result = adapter.fetch_with_report(limit=10)
+        document = result.documents[0]
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(result.http_status, 200)
+        self.assertEqual(result.total_results, 1)
+        self.assertEqual(result.rows_received, 1)
+        self.assertEqual(result.rejected_rows, 0)
+        self.assertEqual(opportunity.source_record_id, "2026-0001")
+        self.assertEqual(opportunity.call_id, "2026-0001")
+        self.assertEqual(opportunity.title, "Descarbonização de PME")
+        self.assertEqual(opportunity.programme, "COMPETE 2030")
+        self.assertEqual(opportunity.status.value, "upcoming")
+        self.assertEqual(opportunity.deadline.isoformat(), "2099-11-30T00:00:00+00:00")
+        self.assertEqual(str(opportunity.budget_total), "1500000")
+        self.assertEqual(opportunity.eligible_regions, ("Norte",))
+        self.assertEqual(opportunity.eligible_applicant_types, ("Privada", "Pública"))
+        self.assertIsNone(opportunity.canonical_url)
+        self.assertIn(
+            "https://portugal2030.pt/plano-anual-de-avisos/",
+            document.discovered_links,
+        )
+        self.assertTrue(
+            any("Descarbonização de PME" in item.excerpt for item in opportunity.evidence)
+        )
+        self.assertTrue(any("30/11/2099" in item.excerpt for item in opportunity.evidence))
+        self.assertEqual(
+            dict(document.metadata)["source_payload_sha256"],
+            hashlib.sha256(payload).hexdigest(),
+        )
+
+    def test_portugal2030_annual_plan_rejects_malformed_workbook(self) -> None:
+        adapter = Portugal2030AnnualPlanAdapter(
+            transport=lambda *_: HttpBinaryResponse(b"not an xlsx", 200, 11)
+        )
+        with self.assertRaisesRegex(SourceError, "valid XLSX"):
+            adapter.fetch()
+
+    def test_portugal2030_annual_plan_rejects_negative_shared_string_indexes(self) -> None:
+        payload = _replace_xlsx_member(
+            _annual_plan_xlsx(),
+            "xl/worksheets/sheet1.xml",
+            b"<v>0</v>",
+            b"<v>-1</v>",
+        )
+        adapter = Portugal2030AnnualPlanAdapter(
+            transport=lambda *_: HttpBinaryResponse(payload, 200, len(payload))
+        )
+        with self.assertRaisesRegex(SourceError, "invalid shared string index"):
+            adapter.fetch()
+
+    def test_portugal2030_annual_plan_rejects_columns_past_xfd(self) -> None:
+        from callbrief.sources import _xlsx_column_index
+
+        self.assertEqual(_xlsx_column_index("XFD1"), 16383)
+        with self.assertRaisesRegex(SourceError, "outside the XLSX limit"):
+            _xlsx_column_index("XFE1")
+
+    def test_portugal2030_annual_plan_maps_id_header_variants_without_common_canonical_url(
+        self,
+    ) -> None:
+        payload = _replace_xlsx_member(
+            _annual_plan_xlsx(),
+            "xl/sharedStrings.xml",
+            b"<si><t>ID</t></si>",
+            b"<si><t>ID Aviso</t></si>",
+        )
+        adapter = Portugal2030AnnualPlanAdapter(
+            transport=lambda *_: HttpBinaryResponse(payload, 200, len(payload))
+        )
+        document = adapter.fetch()[0]
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(opportunity.call_id, "2026-0001")
+        self.assertIsNone(opportunity.canonical_url)
+        self.assertEqual(document.discovered_links, (adapter.listing_url,))
+
+    def test_portugal2030_annual_plan_normalizes_supported_title_and_programme_headers(
+        self,
+    ) -> None:
+        payload = _annual_plan_xlsx()
+        payload = _replace_xlsx_member(
+            payload,
+            "xl/sharedStrings.xml",
+            b"<si><t>Designacao do Aviso</t></si>",
+            b"<si><t>Designacao</t></si>",
+        )
+        payload = _replace_xlsx_member(
+            payload,
+            "xl/sharedStrings.xml",
+            b"<si><t>Programa</t></si>",
+            b"<si><t>Programa operacional</t></si>",
+        )
+        adapter = Portugal2030AnnualPlanAdapter(
+            transport=lambda *_: HttpBinaryResponse(payload, 200, len(payload))
+        )
+
+        opportunity = normalize_source_document(adapter.fetch()[0])
+
+        self.assertEqual(opportunity.title, "Descarbonização de PME")
+        self.assertEqual(opportunity.programme, "COMPETE 2030")
+
+    def test_portugal2030_annual_plan_never_confirms_open_status(self) -> None:
+        record = {
+            "ID": "2026-OLD",
+            "Designacao do Aviso": "Aviso anterior",
+            "Programa": "COMPETE 2030",
+            "Data Inicio Prevista": "01/01/2020",
+            "Data Fim Prevista": "30/11/2099",
+            "status": "Open",
+        }
+        document = SourceDocument(
+            source_id="portugal2030_annual_plan",
+            source_url=Portugal2030AnnualPlanAdapter.endpoint,
+            retrieved_at=datetime.now(UTC),
+            content_type="application/json",
+            title="Aviso anterior",
+            text=json.dumps(record, ensure_ascii=False),
+            discovered_links=(Portugal2030AnnualPlanAdapter.listing_url,),
+        )
+        opportunity = normalize_source_document(document)
+        self.assertEqual(opportunity.status.value, "unknown")
+
+    def test_portugal2030_annual_plan_evidence_ids_are_unique_per_row(self) -> None:
+        opportunities = []
+        for record_id in ("2026-0001", "2026-0002"):
+            record = {
+                "ID": record_id,
+                "Designacao do Aviso": f"Aviso {record_id}",
+                "Programa": "COMPETE 2030",
+                "Data Inicio Prevista": "01/01/2099",
+                "Data Fim Prevista": "30/11/2099",
+            }
+            document = SourceDocument(
+                source_id="portugal2030_annual_plan",
+                source_url=Portugal2030AnnualPlanAdapter.endpoint,
+                retrieved_at=datetime.now(UTC),
+                content_type="application/json",
+                title=record["Designacao do Aviso"],
+                text=json.dumps(record, ensure_ascii=False),
+                metadata=(("record_id", record_id),),
+                discovered_links=(Portugal2030AnnualPlanAdapter.listing_url,),
+            )
+            opportunities.append(normalize_source_document(document))
+
+        evidence_ids = [item.evidence_id for opportunity in opportunities for item in opportunity.evidence]
+        self.assertEqual(len(evidence_ids), len(set(evidence_ids)))
+
+    def test_cinea_adapter_extracts_visible_deadline_evidence_and_reports_page_health(self) -> None:
+        safe_link = (
+            "https://eur03.safelinks.protection.outlook.com/?url="
+            "https%3A%2F%2Fcinea.ec.europa.eu%2Ffunding-opportunities%2Fcalls-proposals%2Fwrapped_en"
+        )
+        html = f"""<!doctype html><html><body>
+        <h1>LIFE Calls for proposals 2026</h1>
+        <a href="/funding-opportunities/calls-proposals/example_en">
+          Standard Action Projects (SAPs) for Environmental Governance
+        </a>
+        <p>Deadline date: 22 September 2026</p>
+        <a href="{safe_link}&amp;data=abc">
+          Standard Action Projects (SAPs) for Climate Governance
+        </a>
+        <p>Deadline date: 22 September 2026</p>
+        <a href="https://untrusted.example/call">
+          Standard Action Projects (SAPs) for a rejected record
+        </a>
+        <p>Deadline date: 22 September 2026</p>
+        </body></html>"""
+        adapter = CineaLifeAdapter(
+            transport=lambda endpoint, timeout: HttpTextResponse(
+                html, 200, len(html.encode("utf-8")), "Tue, 06 Oct 2026 10:00:00 GMT"
+            )
+        )
+
+        result = adapter.fetch_with_report(limit=10)
+
+        self.assertEqual(result.http_status, 200)
+        self.assertEqual(result.rows_received, 3)
+        self.assertEqual(result.rejected_rows, 1)
+        self.assertEqual(result.response_bytes, len(html.encode("utf-8")))
+        self.assertEqual(result.pagination_state, "complete")
+        self.assertEqual(len(result.documents), 2)
+        self.assertIn("22 September 2026", result.documents[0].text)
+        self.assertTrue(dict(result.documents[0].metadata)["record_id"].startswith("CINEA-"))
+        self.assertEqual(
+            {document.discovered_links[0] for document in result.documents},
+            {
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/example_en",
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/wrapped_en",
+            },
+        )
+
+        query_result = adapter.fetch_with_report("LIFE 2026", limit=10)
+        self.assertEqual(len(query_result.documents), 2)
+
+    def test_ted_adapter_maps_public_notices_and_reports_pagination(self) -> None:
+        captured: list[tuple[str, dict[str, str], dict[str, object], float]] = []
+        response = {
+            "total": 15,
+            "results": [
+                {
+                    "publication-number": "123456-2026",
+                    "notice-title": "Digital services framework",
+                    "publication-date": "20261006",
+                    "deadline": "20261030",
+                    "buyer-name": "European authority",
+                    "buyer-country": "PT",
+                }
+            ],
+        }
+
+        def transport(endpoint, params, payload, timeout):
+            captured.append((endpoint, dict(params), dict(payload), timeout))
+            return response
+
+        report = TedSearchAdapter(transport=transport).fetch_with_report(limit=10)
+        self.assertEqual(report.http_status, 200)
+        self.assertEqual(report.total_results, 15)
+        self.assertEqual(report.pagination_state, "more_available")
+        self.assertEqual(len(report.documents), 1)
+        item = report.documents[0]
+        self.assertEqual(item.source_id, "ted_eu_procurement")
+        self.assertEqual(item.title, "Digital services framework")
+        self.assertIn("123456-2026", item.source_url)
+        self.assertIn('"publication-date": "20261006"', item.text)
+        self.assertEqual(captured[0][0], TedSearchAdapter.endpoint)
+        self.assertEqual(captured[0][1], {})
+        self.assertEqual(captured[0][2]["limit"], 10)
+        self.assertIn("publication-number", captured[0][2]["fields"])
+
+    def test_agent_reach_adapter_maps_only_approved_official_pages(self) -> None:
+        class Bridge:
+            def fetch(self, query, *, limit):
+                return (
+                    AgentReachPage(
+                        url="https://portugal2030.pt/avisos/1",
+                        title="Aviso",
+                        text="Metadados capturados",
+                        links=(
+                            "https://portugal2030.pt/avisos/2",
+                            "https://untrusted.example/item",
+                        ),
+                    ),
+                    AgentReachPage(
+                        url="https://127.0.0.1/internal",
+                        title="Internal",
+                        text="Should be discarded",
+                    ),
+                )
+
+        adapter = AgentReachSourceAdapter(Bridge(), allowed_hosts=("portugal2030.pt",))
+        documents = adapter.fetch("avisos", limit=5)
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0].source_id, "agent_reach")
+        self.assertEqual(documents[0].discovered_links, ("https://portugal2030.pt/avisos/2",))
 
     def test_agent_reach_bridge_is_injected_without_scraping_implementation(self) -> None:
         class AgentReachBridge:

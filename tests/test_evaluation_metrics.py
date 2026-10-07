@@ -16,6 +16,7 @@ from callbrief.evaluation import (
     recall_at_k,
     tenant_isolation,
 )
+from evals.real_corpus_benchmark import run_benchmark as run_real_corpus_benchmark
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -135,13 +136,15 @@ class EvaluationMetricsTests(unittest.TestCase):
             },
         )
 
-    def test_metrics_separate_registry_facts_from_unmeasured_quality_kpis(self) -> None:
+    def test_metrics_report_manual_real_sample_and_keep_unmeasured_kpis_separate(self) -> None:
         definitions = json.loads((ROOT / "evals" / "metrics.json").read_text("utf-8"))
         registry = json.loads(
             (ROOT / "src" / "callbrief" / "data" / "source_registry.json").read_text("utf-8")
         )
-        self.assertTrue(definitions["dataset"]["synthetic"])
-        self.assertFalse(definitions["dataset"]["official_calls_collected"])
+        self.assertFalse(definitions["dataset"]["synthetic"])
+        self.assertTrue(definitions["dataset"]["official_calls_collected"])
+        self.assertEqual(definitions["dataset"]["sample_size"], 30)
+        self.assertFalse(definitions["dataset"]["independent_human_adjudication"])
         metrics = {metric["id"]: metric for metric in definitions["metrics"]}
         active_source_count = sum(
             source["enabled"]
@@ -154,13 +157,9 @@ class EvaluationMetricsTests(unittest.TestCase):
             metrics["enabled_official_source_adapters"]["measured_value"],
             active_source_count,
         )
-        self.assertEqual(metrics["official_call_records_collected"]["measured_value"], 0)
+        self.assertEqual(metrics["official_call_records_collected"]["measured_value"], 30)
         for metric_id in (
-            "normalization_available_field_accuracy",
-            "recall_at_5",
-            "deduplication_precision",
             "deterministic_eligibility_accuracy",
-            "citation_validity",
             "multi_tenant_isolation",
             "prompt_injection_resistance",
             "material_change_recall",
@@ -171,6 +170,35 @@ class EvaluationMetricsTests(unittest.TestCase):
                 self.assertTrue(metric["status"].startswith("not_measured"))
                 self.assertIn("target", metric)
         self.assertEqual(
+            metrics["normalization_available_field_accuracy"]["measured_value"]["score"],
+            1.0,
+        )
+        self.assertEqual(
+            metrics["normalization_available_field_accuracy"]["measured_value"]["available"],
+            85,
+        )
+        self.assertEqual(
+            metrics["recall_at_5"]["measured_value"]["current_recall_at_5"],
+            1.0,
+        )
+        self.assertEqual(metrics["recall_at_5"]["measured_value"]["queries"], 27)
+        self.assertIsNone(metrics["deduplication_precision"]["measured_value"]["precision"])
+        self.assertEqual(metrics["deduplication_precision"]["measured_value"]["recall"], 0.0)
+        self.assertEqual(
+            metrics["citation_validity"]["measured_value"]["valid_exact_excerpt_spans"],
+            85,
+        )
+        self.assertEqual(
+            metrics["source_qualification_evidence"]["measured_value"][
+                "preserved_on_opportunity"
+            ],
+            1,
+        )
+        self.assertEqual(
+            metrics["retrieval_no_answer_false_positive_rate"]["measured_value"]["current"],
+            1.0,
+        )
+        self.assertEqual(
             metrics["synthetic_retrieval_recall_at_5"]["measured_value"]["baseline"],
             1 / 3,
         )
@@ -178,6 +206,56 @@ class EvaluationMetricsTests(unittest.TestCase):
             metrics["synthetic_retrieval_recall_at_5"]["measured_value"]["current"],
             1.0,
         )
+
+    def test_manual_real_corpus_benchmark_reports_scope_and_offline_metrics(self) -> None:
+        report = run_real_corpus_benchmark()
+
+        self.assertEqual(report["unique_real_opportunities"], 30)
+        self.assertEqual(report["status_counts"], {
+            "open": 24,
+            "upcoming": 1,
+            "closed": 5,
+        })
+        self.assertEqual(report["retrieval"]["queries_total"], 27)
+        self.assertEqual(report["retrieval"]["answerable_queries"], 26)
+        self.assertEqual(report["retrieval"]["baseline"]["recall_at_5"], 1.0)
+        self.assertEqual(report["retrieval"]["current"]["recall_at_5"], 1.0)
+        self.assertEqual(report["retrieval"]["query_latency_ms"]["queries_measured"], 27)
+        self.assertGreaterEqual(report["retrieval"]["query_latency_ms"]["current_mean"], 0.0)
+        dataset = json.loads((ROOT / "evals" / "real_opportunities.json").read_text("utf-8"))
+        categories = {item["category"] for item in dataset["queries"]}
+        self.assertIn("funding size", categories)
+        self.assertIn("deadline", categories)
+        self.assertEqual(
+            report["retrieval"]["current"]["no_answer_false_positive_rate"], 1.0
+        )
+        self.assertEqual(report["normalization"]["available"], 85)
+        self.assertEqual(report["normalization"]["correct"], 85)
+        self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 85)
+        self.assertEqual(
+            report["normalization"]["citation_structure"]["valid_exact_excerpt_spans"],
+            85,
+        )
+        qualification_evidence = report["normalization"]["source_qualifications"]
+        self.assertEqual(qualification_evidence["available"], 1)
+        self.assertEqual(qualification_evidence["valid_exact_excerpt_spans"], 1)
+        self.assertEqual(qualification_evidence["preserved_on_opportunity"], 1)
+        qualification = qualification_evidence["claims"][0]
+        self.assertEqual(qualification["record_id"], "Mpr-2026-6")
+        self.assertEqual(
+            qualification["source_url"],
+            "https://compete2030.gov.pt/wp-content/uploads/2026/06/AVISOM3-1.pdf",
+        )
+        self.assertEqual(
+            qualification["evidence_location"],
+            "PDF da republicação de 30/09/2026, página 1, secção «Republicação»",
+        )
+        self.assertEqual(report["deduplication"]["labelled_pairs"], 15)
+        self.assertIsNone(report["deduplication"]["precision"])
+        self.assertEqual(report["deduplication"]["recall"], 0.0)
+        self.assertEqual(report["deduplication"]["missed_duplicate_pairs"], 5)
+        self.assertTrue(report["multi_client_demo"]["no_cross_workspace_result"])
+        self.assertEqual(report["network_requests"], 0)
 
 
 if __name__ == "__main__":

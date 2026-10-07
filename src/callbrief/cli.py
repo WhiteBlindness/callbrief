@@ -5,11 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sqlite3
 import sys
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +20,7 @@ from .corpus import Corpus, CorpusError
 from .domain import FitSignals, OpportunityType, OrganisationProfile
 from .eligibility import assess_eligibility
 from .filtering import FilterState, OpportunityFilter, filter_opportunity
+from .normalization import normalize_source_document
 from .pipeline import run_discovery
 from .provider import OpenAICompatibleClient, ProviderError
 from .report import (
@@ -31,7 +34,12 @@ from .report import (
 )
 from .scoring import FitWeights, score_fit
 from .settings import Settings, SettingsError
-from .sources import SourceError, create_adapter_registry, load_source_registry
+from .sources import (
+    SourceError,
+    SourceFetchResult,
+    create_adapter_registry,
+    load_source_registry,
+)
 from .storage import SqliteStore
 
 
@@ -84,6 +92,14 @@ def _parser() -> argparse.ArgumentParser:
     source_commands = source.add_subparsers(dest="source_command", required=True)
     source_list = source_commands.add_parser("list", help="lista fontes e respetivo estado")
     source_list.add_argument("--registry", type=Path, default=None)
+    source_check = source_commands.add_parser(
+        "check", help="verifica uma fonte ativa sem guardar os registos recebidos"
+    )
+    source_check.add_argument("source_id", help="identificador declarado no catálogo de fontes")
+    source_check.add_argument("--query", default="", help="consulta opcional para a fonte")
+    source_check.add_argument(
+        "--limit", type=int, default=20, help="máximo de registos, entre 1 e 100"
+    )
 
     discover = commands.add_parser("discover", help="pesquisa e guarda avisos numa fonte ativa")
     discover.add_argument("--source", required=True, help="identificador de fonte ativa")
@@ -240,8 +256,110 @@ def _source_list(registry_path: Path | None) -> int:
         state = state_labels[item.status]
         address = item.base_url or "URL por verificar"
         cadence = cadence_labels[item.check_cadence]
-        print(f"{item.source_id}\t{state}\t{cadence}\t{address}")
+        redistribution = (
+            "reutilização comercial documentada"
+            if item.commercial_redistribution
+            else "reutilização comercial indisponível"
+        )
+        print(
+            f"{item.source_id}\t{state}\t{cadence}\t{item.legal_status}\t"
+            f"{redistribution}\t{address}"
+        )
     return 0
+
+
+def _source_check(args: argparse.Namespace) -> int:
+    if not 1 <= args.limit <= 100:
+        raise ValueError("O limite tem de estar entre 1 e 100.")
+    definition = next(
+        (item for item in load_source_registry() if item.source_id == args.source_id), None
+    )
+    if definition is None:
+        raise ValueError("O identificador não existe no catálogo de fontes.")
+    adapter = create_adapter_registry().get(args.source_id)
+    if adapter is None:
+        print(f"Resultado: não executado; estado da fonte: {definition.status}.")
+        print(f"Política de reutilização: {definition.legal_status}.")
+        print("HTTP: não solicitado; registos: 0; esquema: não verificado.")
+        return 1
+
+    fetch_with_report = getattr(adapter, "fetch_with_report", None)
+    try:
+        if callable(fetch_with_report):
+            result = fetch_with_report(args.query, limit=args.limit)
+        else:
+            documents = adapter.fetch(args.query, limit=args.limit)
+            result = SourceFetchResult(
+                source_id=args.source_id,
+                documents=documents,
+                http_status=200,
+                response_bytes=sum(len(item.text.encode("utf-8")) for item in documents),
+                total_results=None,
+                pagination_state=(
+                    "limit_reached_unknown" if len(documents) == args.limit else "unknown"
+                ),
+                rows_received=len(documents),
+            )
+    except SourceError as exc:
+        status = re.search(r"HTTP (\d{3})", str(exc))
+        print("Resultado: falhou.")
+        print(f"HTTP: {status.group(1) if status else 'não disponível'}.")
+        print("Registos: recebidos 0; aceites 0; rejeitados 0.")
+        print("Tamanho da resposta: não disponível; esquema: não verificado.")
+        print("Intervalo de datas estruturadas: sem dados estruturados.")
+        print("Última atualização declarada pela fonte: desconhecida.")
+        print("Paginação: não determinada.")
+        print(f"Detalhe: {exc}")
+        return 1
+
+    normalized = []
+    rejected = result.rejected_rows
+    for document in result.documents:
+        try:
+            normalized.append(normalize_source_document(document))
+        except (TypeError, ValueError):
+            rejected += 1
+    valid = len(normalized)
+    schema_state = "válido" if rejected == 0 else "com registos rejeitados"
+    successful_http = 200 <= result.http_status < 300
+    print(f"Resultado: {'OK' if successful_http and rejected == 0 else 'falhou'}.")
+    print(f"HTTP: {result.http_status}.")
+    print(
+        f"Registos: recebidos {result.rows_received}; aceites {valid}; rejeitados {rejected}."
+    )
+    print(f"Tamanho da resposta: {result.response_bytes} bytes; esquema: {schema_state}.")
+    dates = [
+        value.date()
+        for item in normalized
+        for value in (
+            item.publication_date,
+            item.opening_date,
+            item.deadline,
+            item.source_updated_at,
+        )
+        if value is not None
+    ]
+    if dates:
+        print(
+            f"Intervalo de datas estruturadas: {min(dates).strftime('%d/%m/%Y')} a "
+            f"{max(dates).strftime('%d/%m/%Y')}."
+        )
+    else:
+        print("Intervalo de datas estruturadas: sem dados estruturados.")
+    updated = [item.source_updated_at for item in normalized if item.source_updated_at is not None]
+    for document in result.documents:
+        if document.last_modified:
+            try:
+                updated.append(parsedate_to_datetime(document.last_modified))
+            except (TypeError, ValueError, OverflowError):
+                continue
+    if updated:
+        last_updated = max(updated).astimezone(UTC).strftime("%d/%m/%Y %H:%M UTC")
+    else:
+        last_updated = "desconhecida"
+    print(f"Última atualização declarada pela fonte: {last_updated}.")
+    print(f"Paginação: {result.pagination_state}.")
+    return 0 if successful_http and rejected == 0 else 1
 
 
 def _discover(args: argparse.Namespace) -> int:
@@ -451,6 +569,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "source":
+            if args.source_command == "check":
+                return _source_check(args)
             return _source_list(args.registry)
         if args.command == "discover":
             return _discover(args)

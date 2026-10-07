@@ -79,6 +79,125 @@ class NormalizationTests(unittest.TestCase):
         self.assertEqual(opportunity.status, OpportunityStatus.UNKNOWN)
         self.assertEqual(opportunity.opportunity_type, OpportunityType.UNKNOWN)
 
+    def test_status_metadata_without_an_exact_source_span_remains_unknown(self) -> None:
+        document = SourceDocument(
+            source_id="eu_funding_tenders",
+            source_url="https://example.eu/call",
+            retrieved_at=NOW,
+            content_type="text/plain",
+            title="Call without a status label",
+            text="The source page does not state a status.",
+            metadata=(("status", "open"),),
+        )
+
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(opportunity.status, OpportunityStatus.UNKNOWN)
+        self.assertEqual(opportunity.evidence, ())
+
+    def test_normalizes_ted_notice_dates_and_classifies_procurement_as_tender(self) -> None:
+        record = {
+            "publication-number": "123456-2026",
+            "notice-title": "Digital services framework",
+            "publication-date": "20261005",
+            "deadline": "20261030",
+            "buyer-name": "European authority",
+        }
+        text = json.dumps(record, ensure_ascii=False, indent=2)
+        document = SourceDocument(
+            source_id="ted_eu_procurement",
+            source_url="https://ted.europa.eu/en/notice/123456-2026",
+            retrieved_at=NOW,
+            content_type="application/json",
+            title="Digital services framework",
+            text=text,
+        )
+
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(opportunity.source_record_id, "123456-2026")
+        self.assertEqual(opportunity.call_id, "123456-2026")
+        self.assertEqual(opportunity.title, "Digital services framework")
+        self.assertEqual(opportunity.authority, "European authority")
+        self.assertEqual(opportunity.publication_date, datetime(2026, 10, 5, tzinfo=UTC))
+        self.assertEqual(opportunity.deadline, datetime(2026, 10, 30, tzinfo=UTC))
+        self.assertEqual(opportunity.status, OpportunityStatus.OPEN)
+        self.assertEqual(opportunity.opportunity_type, OpportunityType.TENDER)
+        for reference in opportunity.evidence:
+            self.assertEqual(text[reference.start : reference.end], reference.excerpt)
+            self.assertEqual(reference.source_hash, document.content_hash)
+
+    def test_normalizes_cinea_listing_deadline_from_the_visible_source_excerpt(self) -> None:
+        text = (
+            "LIFE calls for proposals 2026\n"
+            "Standard Action Projects (SAPs) for Environmental Governance\n"
+            "Deadline date: 22 September 2026"
+        )
+        document = SourceDocument(
+            source_id="cinea_life",
+            source_url="https://cinea.ec.europa.eu/life-calls-proposals-2026_en",
+            retrieved_at=NOW,
+            content_type="text/html; charset=utf-8",
+            title="Standard Action Projects (SAPs) for Environmental Governance",
+            text=text,
+            metadata=(
+                ("record_id", "LIFE-2026-environmental-governance"),
+                ("title", "Standard Action Projects (SAPs) for Environmental Governance"),
+                ("programme", "LIFE"),
+                ("deadline", "22 September 2026"),
+                ("status", "open"),
+            ),
+            discovered_links=(
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+                "environmental-governance_en",
+            ),
+        )
+
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(
+            opportunity.title,
+            "Standard Action Projects (SAPs) for Environmental Governance",
+        )
+        self.assertEqual(opportunity.deadline, datetime(2026, 9, 22, tzinfo=UTC))
+        self.assertEqual(opportunity.status, OpportunityStatus.CLOSED)
+        self.assertEqual(opportunity.programme, "LIFE")
+        self.assertIsNone(opportunity.call_id)
+        self.assertEqual(
+            opportunity.canonical_url,
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+            "environmental-governance_en",
+        )
+        title_evidence = next(item for item in opportunity.evidence if item.section == "title")
+        deadline_evidence = next(
+            item for item in opportunity.evidence if item.section == "deadline"
+        )
+        self.assertEqual(
+            title_evidence.excerpt,
+            "Standard Action Projects (SAPs) for Environmental Governance",
+        )
+        self.assertEqual(deadline_evidence.excerpt, "22 September 2026")
+        self.assertEqual(
+            document.text[deadline_evidence.start : deadline_evidence.end],
+            deadline_evidence.excerpt,
+        )
+
+    def test_cinea_future_deadline_does_not_imply_open_status(self) -> None:
+        text = "LIFE calls for proposals 2026\nDeadline date: 22 September 2027"
+        document = SourceDocument(
+            source_id="cinea_life",
+            source_url="https://cinea.ec.europa.eu/life-calls-proposals-2026_en",
+            retrieved_at=NOW,
+            content_type="text/html; charset=utf-8",
+            title="LIFE call",
+            text=text,
+            metadata=(("deadline", "22 September 2027"), ("status", "open")),
+        )
+
+        opportunity = normalize_source_document(document)
+
+        self.assertEqual(opportunity.status, OpportunityStatus.UNKNOWN)
+
     def test_title_only_source_update_does_not_change_eligibility_semantics(self) -> None:
         base_record = {
             "id": "stable-call-id",

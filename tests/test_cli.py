@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 
 from callbrief.cli import main
 from callbrief.domain import (
@@ -16,7 +18,9 @@ from callbrief.domain import (
     OpportunityType,
     OrganisationProfile,
     RuleOperator,
+    SourceDocument,
 )
+from callbrief.sources import SourceError, SourceFetchResult
 from callbrief.storage import SqliteStore
 
 
@@ -31,6 +35,66 @@ class CliTests(unittest.TestCase):
         self.assertIn("eu_funding_tenders\tativa", output.getvalue())
         self.assertIn("aguarda revisão", output.getvalue())
         self.assertIn("por verificar", output.getvalue())
+
+    def test_source_check_reports_fetch_and_schema_metrics_without_saving(self) -> None:
+        record = {
+            "publication-number": "123456-2026",
+            "notice-title": "Digital services framework",
+            "publication-date": "20261005",
+            "deadline": "20261030",
+        }
+        document = SourceDocument(
+            source_id="ted_eu_procurement",
+            source_url="https://ted.europa.eu/en/notice/123456-2026",
+            retrieved_at=datetime(2026, 10, 6, tzinfo=UTC),
+            content_type="application/json",
+            title="Digital services framework",
+            text=json.dumps(record, ensure_ascii=False),
+        )
+
+        class Adapter:
+            def fetch_with_report(self, query: str = "", *, limit: int = 20) -> SourceFetchResult:
+                return SourceFetchResult(
+                    source_id="ted_eu_procurement",
+                    documents=(document,),
+                    http_status=200,
+                    response_bytes=512,
+                    total_results=1,
+                    pagination_state="complete",
+                    rows_received=1,
+                )
+
+        output = io.StringIO()
+        with patch(
+            "callbrief.cli.create_adapter_registry",
+            return_value={"ted_eu_procurement": Adapter()},
+        ), redirect_stdout(output):
+            code = main(["source", "check", "ted_eu_procurement", "--limit", "20"])
+
+        self.assertEqual(code, 0)
+        self.assertIn("HTTP: 200", output.getvalue())
+        self.assertIn("recebidos 1; aceites 1; rejeitados 0", output.getvalue())
+        self.assertIn("512 bytes", output.getvalue())
+        self.assertIn("Intervalo de datas estruturadas", output.getvalue())
+        self.assertIn("05/10/2026 a 30/10/2026", output.getvalue())
+        self.assertIn("Paginação: complete", output.getvalue())
+
+    def test_source_check_reports_unavailable_metadata_after_transport_failure(self) -> None:
+        class Adapter:
+            def fetch_with_report(self, query: str = "", *, limit: int = 20) -> SourceFetchResult:
+                raise SourceError("Source API request failed: URLError")
+
+        output = io.StringIO()
+        with patch(
+            "callbrief.cli.create_adapter_registry",
+            return_value={"eu_funding_tenders": Adapter()},
+        ), redirect_stdout(output):
+            code = main(["source", "check", "eu_funding_tenders"])
+
+        self.assertEqual(code, 1)
+        self.assertIn("HTTP: não disponível", output.getvalue())
+        self.assertIn("Última atualização declarada pela fonte: desconhecida", output.getvalue())
+        self.assertIn("Paginação: não determinada", output.getvalue())
 
     def test_organisation_add_and_show_stay_within_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

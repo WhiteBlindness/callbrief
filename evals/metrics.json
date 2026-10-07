@@ -2,62 +2,66 @@
   "schema_version": "0.2",
   "dataset": {
     "name": "Conjunto de avaliação do CallBrief",
-    "synthetic": true,
-    "official_calls_collected": false,
+    "synthetic": false,
+    "official_calls_collected": true,
     "real_call_human_labelled_sample": false,
-    "sample_size": 0,
-    "status": "not_measured",
+    "manual_reference_labels": true,
+    "independent_human_adjudication": false,
+    "sample_size": 30,
+    "checked_on": "2026-10-07",
+    "status": "manual_curated_provisional",
     "notes": [
-      "Os cenários incluídos são exemplos sintéticos para verificações repetíveis, não observações de avisos reais.",
-      "Não foram recolhidos 30 avisos oficiais.",
-      "Os alvos são metas de avaliação, não resultados medidos."
+      "Inclui 30 oportunidades reais consultadas em páginas oficiais de COMPETE 2030, Funding & Tenders e CINEA; os adaptadores não recolheram esta amostra.",
+      "Os rótulos e excertos foram preparados numa única passagem, sem validação independente por uma segunda pessoa.",
+      "As páginas e ligações oficiais foram registadas, mas não foram guardadas as respostas integrais nem os respetivos hashes.",
+      "As verificações HTTP executadas nesta máquina falharam por falta de acesso de rede; as medições offline não demonstram disponibilidade em direto."
     ]
   },
   "metrics": [
     {
       "id": "enabled_official_source_adapters",
       "definition": "Número de adaptadores oficiais ativos no registo declarativo de fontes.",
-      "measured_value": 1,
+      "measured_value": 4,
       "status": "measured_registry_configuration",
-      "target": {"min": 6, "max": 8},
+      "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "O valor conta o adaptador configurado. Não confirma uma consulta em direto nem recolha de avisos."
+      "measurement_note": "Quatro adaptadores oficiais estão ativos no registo: Funding & Tenders, TED, CINEA e XLSX do Plano Anual Portugal 2030. TED cobre contratação pública; o Plano Anual fornece apenas previsões. A disponibilidade HTTP não foi confirmada nesta máquina."
     },
     {
       "id": "official_call_records_collected",
       "definition": "Número de avisos oficiais conservados numa amostra recolhida.",
-      "measured_value": 0,
-      "status": "measured",
+      "measured_value": 30,
+      "status": "measured_manual_curated",
       "target": {"min": 30},
       "requires_human_labels": false,
-      "measurement_note": "A base de avaliação não inclui avisos oficiais."
+      "measurement_note": "Trinta oportunidades reais, transcritas manualmente de páginas oficiais. Não foram recolhidas pelos adaptadores nem acompanhadas de respostas integrais arquivadas."
     },
     {
       "id": "normalization_available_field_accuracy",
       "definition": "Valores normalizados iguais divididos pelos campos disponíveis tanto no esperado como no observado. Valores ausentes ficam fora do cálculo.",
-      "measured_value": null,
-      "status": "not_measured",
+      "measured_value": {"available": 85, "correct": 85, "wrong": 0, "unknown": 0, "score": 1.0},
+      "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Exige uma amostra de campos de avisos normalizados e revistos por pessoas."
+      "measurement_note": "30 títulos, 25 estados e 30 prazos disponíveis. Transcrição e avaliação numa única passagem, sem adjudicação independente. Reproduzível com python -m evals.real_corpus_benchmark."
     },
     {
       "id": "recall_at_5",
       "definition": "Identificadores de avisos relevantes nos primeiros cinco resultados, divididos pelo total de identificadores relevantes anotados.",
-      "measured_value": null,
-      "status": "not_measured_on_real_calls",
+      "measured_value": {"baseline_recall_at_5": 1.0, "current_recall_at_5": 1.0, "baseline_mrr_at_5": 1.0, "current_mrr_at_5": 1.0, "answerable_queries": 26, "queries": 27},
+      "status": "measured_manual_single_pass",
       "target": 0.9,
       "requires_human_labels": true,
-      "measurement_note": "Exige avaliações humanas de relevância para cada consulta e aviso candidato. A comparação sintética separada está em evals/retrieval_benchmark.py."
+      "measurement_note": "26 consultas respondíveis, incluindo montantes e prazos, e uma sem resposta, com rótulos manuais de passagem única. Não houve adjudicação independente. Tanto a referência como o algoritmo atual atingiram 1,00; não se mediu melhoria. A consulta sem resposta devolveu resultados."
     },
     {
       "id": "deduplication_precision",
       "definition": "Pares previstos como duplicados e confirmados, divididos por todos os pares previstos como duplicados.",
-      "measured_value": null,
-      "status": "not_measured",
+      "measured_value": {"predicted": 0, "correct": 0, "precision": null, "recall": 0.0, "missed_duplicate_pairs": 5, "false_positive_pairs": 0, "labelled_pairs": 15},
+      "status": "measured_manual_pairs_no_predictions",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Exige uma amostra revista por pessoas de pares do mesmo aviso e de avisos distintos."
+      "measurement_note": "Cinco pares positivos CINEA/Funding & Tenders foram confirmados pelas ligações oficiais de espelho; dez pares negativos contêm avisos semelhantes. A normalização separada não encontra identificador comum nos registos CINEA: não prevê duplicados, falha os cinco positivos e não produz falsos positivos. A precisão é indefinida com zero previsões. Rótulos de passagem única, sem revisão independente."
     },
     {
       "id": "deterministic_eligibility_accuracy",
@@ -71,11 +75,20 @@
     {
       "id": "citation_validity",
       "definition": "Identificadores de citações que apontam para evidência fornecida, divididos por todas as citações produzidas.",
-      "measured_value": null,
-      "status": "not_measured_on_application_output",
+      "measured_value": {"cited_facts": 85, "valid_exact_excerpt_spans": 85, "score": 1.0, "official_payload_hashes_missing": 30},
+      "status": "measured_fixture_excerpt_structure",
       "target": 1.0,
       "requires_human_labels": false,
-      "measurement_note": "O contrato rejeita citações inexistentes, mas ainda não foi avaliada uma amostra de resultados da aplicação."
+      "measurement_note": "Os 85 factos normalizados apontam para excertos exatos na amostra local e para a ligação oficial registada. Não há resumos criptográficos das respostas oficiais arquivadas, por isso esta medida não valida as páginas originais nem a semântica dos excertos."
+    },
+    {
+      "id": "source_qualification_evidence",
+      "definition": "Condições específicas preservadas com excerto, URL oficial, localização e referência na evidência da oportunidade derivada.",
+      "measured_value": {"claims": 1, "valid_exact_excerpt_spans": 1, "preserved_on_opportunity": 1, "score": 1.0},
+      "status": "measured_local_evidence_structure",
+      "target": 1.0,
+      "requires_human_labels": false,
+      "measurement_note": "A condição de prorrogação do MPr-2026-6 aponta para o PDF oficial, página 1, e é anexada à evidência da oportunidade derivada. O corpo do PDF e o respetivo resumo criptográfico não foram arquivados; a medição valida a estrutura local, não a página original."
     },
     {
       "id": "multi_tenant_isolation",
@@ -103,6 +116,24 @@
       "target": 1.0,
       "requires_human_labels": true,
       "measurement_note": "Os testes determinísticos cobrem alterações sintéticas; falta um conjunto revisto de capturas reais."
+    },
+    {
+      "id": "retrieval_no_answer_false_positive_rate",
+      "definition": "Consultas sem avisos relevantes anotados que ainda recebem resultados, dividido por todas as consultas sem resposta.",
+      "measured_value": {"baseline": 1.0, "current": 1.0, "false_positives": 1, "no_answer_queries": 1},
+      "status": "measured_manual_single_pass",
+      "target": 0.0,
+      "requires_human_labels": true,
+      "measurement_note": "Uma consulta sem resposta teve resultados nos dois algoritmos. É uma limitação de abstenção a resolver; o conjunto de uma consulta não permite estimar a taxa em produção."
+    },
+    {
+      "id": "live_source_check_success_count",
+      "definition": "Consultas HTTP de verificação de fonte concluídas com uma resposta interpretável nesta máquina.",
+      "measured_value": {"successful": 0, "attempted": 4},
+      "status": "blocked_by_environment_network",
+      "target": {"min": 3},
+      "requires_human_labels": false,
+      "measurement_note": "As quatro fontes ativas devolveram URLError antes de receber estado HTTP ou bytes. A disponibilidade não foi validada em execução neste ambiente."
     },
     {
       "id": "synthetic_retrieval_recall_at_5",
