@@ -27,9 +27,7 @@ from callbrief.storage import SqliteStore
 class CliTests(unittest.TestCase):
     def test_source_check_all_active_emits_compact_machine_readable_summary(self) -> None:
         definitions = tuple(
-            item
-            for item in load_source_registry()
-            if item.enabled and item.status == "active"
+            item for item in load_source_registry() if item.enabled and item.status == "active"
         )
 
         class Adapter:

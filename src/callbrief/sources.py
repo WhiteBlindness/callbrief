@@ -1030,18 +1030,18 @@ class FundingTendersAdapter:
                     retrieved_at=retrieved_at,
                     content_type="application/json",
                     title=title,
-                text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
-                metadata=(
-                    ("record_id", record_id),
-                    *_source_metadata(total, min(len(rows), limit), limit),
-                    *scalar_metadata[:96],
-                    *_source_context_metadata(self.source_id),
-                ),
-                discovered_links=links,
-                last_modified=last_modified,
-                provenance_status=provenance,
-                source_payload_sha256=payload_hash,
-            )
+                    text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                    metadata=(
+                        ("record_id", record_id),
+                        *_source_metadata(total, min(len(rows), limit), limit),
+                        *scalar_metadata[:96],
+                        *_source_context_metadata(self.source_id),
+                    ),
+                    discovered_links=links,
+                    last_modified=last_modified,
+                    provenance_status=provenance,
+                    source_payload_sha256=payload_hash,
+                )
             )
         returned = len(documents)
         pagination = dict(_source_metadata(total, returned, limit))["source_pagination_state"]

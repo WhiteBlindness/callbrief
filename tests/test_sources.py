@@ -479,7 +479,9 @@ class SourceAdapterTests(unittest.TestCase):
         deadline_evidence = result.documents[0].evidence(
             0, len(result.documents[0].text), section="deadline"
         )
-        self.assertEqual(deadline_evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
+        self.assertEqual(
+            deadline_evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
+        )
         self.assertEqual(deadline_evidence.source_payload_sha256, payload_hash)
         self.assertIsNone(deadline_evidence.normalized_snapshot)
         self.assertEqual(
@@ -562,9 +564,7 @@ class SourceAdapterTests(unittest.TestCase):
             opportunity.evidence[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
         )
         self.assertEqual(opportunity.evidence[0].source_payload_sha256, payload_hash)
-        self.assertEqual(
-            opportunity.evidence[0].normalized_snapshot, document.normalized_snapshot
-        )
+        self.assertEqual(opportunity.evidence[0].normalized_snapshot, document.normalized_snapshot)
 
     def test_agent_reach_adapter_maps_only_approved_official_pages(self) -> None:
         class Bridge:
@@ -617,9 +617,9 @@ class SourceAdapterTests(unittest.TestCase):
                     ),
                 )
 
-        documents = AgentReachSourceAdapter(
-            Bridge(), allowed_hosts=("portugal2030.pt",)
-        ).fetch("PT2030", limit=1)
+        documents = AgentReachSourceAdapter(Bridge(), allowed_hosts=("portugal2030.pt",)).fetch(
+            "PT2030", limit=1
+        )
         opportunity = normalize_source_document(documents[0])
 
         self.assertEqual(opportunity.source_record_id, "PT2030-TEST-1")
@@ -630,9 +630,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(
             opportunity.evidence[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
         )
-        self.assertEqual(
-            opportunity.evidence[0].source_payload_sha256, source_payload_sha256
-        )
+        self.assertEqual(opportunity.evidence[0].source_payload_sha256, source_payload_sha256)
 
     def test_agent_reach_bridge_is_injected_without_scraping_implementation(self) -> None:
         class AgentReachBridge:

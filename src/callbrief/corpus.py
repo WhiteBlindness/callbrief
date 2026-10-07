@@ -290,11 +290,7 @@ class Corpus:
             raise CorpusError("max_results must be between 1 and 12")
         raw_terms = tuple(term for term in _normalise(query).split() if term not in _STOP_WORDS)
         expanded_terms = set(raw_terms)
-        expanded_terms.update(
-            synonym
-            for term in raw_terms
-            for synonym in _SYNONYMS.get(term, ())
-        )
+        expanded_terms.update(synonym for term in raw_terms for synonym in _SYNONYMS.get(term, ()))
         terms = tuple(sorted(expanded_terms))
         if not terms:
             raise CorpusError("Search query does not contain searchable terms")

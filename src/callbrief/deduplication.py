@@ -73,7 +73,9 @@ def _strong_match(candidate: Opportunity, existing: Opportunity) -> tuple[str, .
     return tuple(matches)
 
 
-def _review_match(candidate: Opportunity, existing: Opportunity) -> tuple[DuplicateKind, tuple[str, ...]] | None:
+def _review_match(
+    candidate: Opportunity, existing: Opportunity
+) -> tuple[DuplicateKind, tuple[str, ...]] | None:
     if any(
         value is None
         for value in (
@@ -137,9 +139,7 @@ def find_duplicate(
         matched_by = _strong_match(candidate, existing)
         if matched_by:
             return DuplicateResult(DuplicateKind.EXACT, existing.id, matched_by)
-    review_matches = tuple(
-        (item, _review_match(candidate, item)) for item in ordered
-    )
+    review_matches = tuple((item, _review_match(candidate, item)) for item in ordered)
     probable = tuple(
         (item, match)
         for item, match in review_matches

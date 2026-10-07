@@ -201,7 +201,7 @@ class AgentRunner:
                                             "excerpt": item.excerpt,
                                         }
                                         for item in found
-                                    ]
+                                    ],
                                 },
                                 ensure_ascii=False,
                             ),

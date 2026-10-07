@@ -43,9 +43,7 @@ class AgentReachSmokeTests(unittest.TestCase):
         self.assertEqual(report["opportunities_normalized"], 1)
         self.assertEqual(report["records"][0]["source_id"], "agent_reach")
         self.assertEqual(report["records"][0]["call_id"], "PT2030-LOCAL-1")
-        self.assertEqual(
-            report["records"][0]["provenance_status"], "MANUALLY_TRANSCRIBED"
-        )
+        self.assertEqual(report["records"][0]["provenance_status"], "MANUALLY_TRANSCRIBED")
         self.assertNotIn("bridge", json.dumps(report, ensure_ascii=False).casefold())
 
 

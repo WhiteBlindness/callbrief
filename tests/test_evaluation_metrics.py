@@ -187,9 +187,7 @@ class EvaluationMetricsTests(unittest.TestCase):
             0.9117647058823529,
         )
         self.assertEqual(metrics["recall_at_5"]["measured_value"]["total_queries"], 59)
-        self.assertEqual(
-            metrics["deduplication_precision"]["measured_value"]["precision"], 1.0
-        )
+        self.assertEqual(metrics["deduplication_precision"]["measured_value"]["precision"], 1.0)
         self.assertEqual(metrics["deduplication_precision"]["measured_value"]["recall"], 1.0)
         self.assertEqual(
             metrics["citation_validity"]["measured_value"]["valid_exact_excerpt_spans"],

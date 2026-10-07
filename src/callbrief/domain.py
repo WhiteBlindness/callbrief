@@ -121,9 +121,10 @@ class EvidenceReference:
         if self.provenance_status is EvidenceProvenance.LIVE_SOURCE_VERIFIED:
             if self.source_payload_sha256 is None:
                 raise DomainValidationError("Live-source evidence requires its response SHA-256")
-        if self.normalized_snapshot is not None and len(
-            self.normalized_snapshot.encode("utf-8")
-        ) > 16 * 1024:
+        if (
+            self.normalized_snapshot is not None
+            and len(self.normalized_snapshot.encode("utf-8")) > 16 * 1024
+        ):
             raise DomainValidationError("normalized_snapshot cannot exceed 16 KiB")
         if self.retrieved_at.tzinfo is None:
             raise DomainValidationError("retrieved_at must include a timezone")
@@ -170,9 +171,10 @@ class SourceDocument:
         if self.provenance_status is EvidenceProvenance.LIVE_SOURCE_VERIFIED:
             if self.source_payload_sha256 is None:
                 raise DomainValidationError("Live source documents require their response SHA-256")
-        if self.normalized_snapshot is not None and len(
-            self.normalized_snapshot.encode("utf-8")
-        ) > 16 * 1024:
+        if (
+            self.normalized_snapshot is not None
+            and len(self.normalized_snapshot.encode("utf-8")) > 16 * 1024
+        ):
             raise DomainValidationError("normalized_snapshot cannot exceed 16 KiB")
         for link in self.discovered_links:
             _https_url(link, "discovered_links item")

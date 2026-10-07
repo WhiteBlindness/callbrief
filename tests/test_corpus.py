@@ -119,9 +119,7 @@ class CorpusTests(unittest.TestCase):
             )
             corpus = Corpus.load(root)
 
-            results = corpus.search(
-                "testar veículos autónomos conectados", max_results=1
-            )
+            results = corpus.search("testar veículos autónomos conectados", max_results=1)
 
             self.assertEqual(len(results), 1)
             self.assertGreater(results[0].term_coverage, 0.5)
