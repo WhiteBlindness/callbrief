@@ -145,7 +145,9 @@ jobs:
               "evidence_provenance_by_source": dict(sorted(provenance.items())),
           })
 
-          cinea = [item for item in records if item.get("source_id") == "cinea"]
+          cinea = [
+              item for item in records if item.get("source_id") in {"cinea", "cinea_life"}
+          ]
           tenders = [item for item in records if item.get("source_id") == "eu_funding_tenders"]
           if cinea and tenders:
               from callbrief.deduplication import find_duplicate
