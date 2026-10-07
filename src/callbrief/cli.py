@@ -447,8 +447,12 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 parser_error = type(exc).__name__
 
         successful_http = http_status is not None and 200 <= http_status < 300
-        schema_status = "invalid" if parser_error is not None else "partial" if rows_rejected else "valid"
-        parser_result = "failed" if parser_error is not None else "parsed" if normalized else "valid_empty"
+        schema_status = (
+            "invalid" if parser_error is not None else "partial" if rows_rejected else "valid"
+        )
+        parser_result = (
+            "failed" if parser_error is not None else "parsed" if normalized else "valid_empty"
+        )
         elapsed_ms = round((perf_counter() - started) * 1000, 3)
         report_items.append(
             {
@@ -469,7 +473,9 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 "source_payload_sha256": sorted(payload_hashes),
                 "parser_result": parser_result,
                 "elapsed_ms": elapsed_ms,
-                "success": successful_http and schema_status == "valid" and parser_result == "parsed",
+                "success": successful_http
+                and schema_status == "valid"
+                and parser_result == "parsed",
                 "error_code": parser_error,
             }
         )
