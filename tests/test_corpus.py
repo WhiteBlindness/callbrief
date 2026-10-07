@@ -114,7 +114,10 @@ class CorpusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             (root / "call.md").write_text(
-                "Flagship-pilot demonstrations of Cooperative, Connected and Automated Mobility (CCAM).",
+                (
+                    "Flagship-pilot demonstrations of Cooperative, Connected and "
+                    "Automated Mobility (CCAM)."
+                ),
                 encoding="utf-8",
             )
             corpus = Corpus.load(root)
