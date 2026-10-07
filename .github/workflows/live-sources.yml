@@ -4,10 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       ref:
-        description: Branch, tag, or commit SHA to verify
+        description: Published branch or tag to verify; prefer a branch name
         required: true
         default: main
         type: string
+      limit:
+        description: Maximum records to inspect per source (1 to 100)
+        required: true
+        default: 20
+        type: number
 
 permissions:
   contents: read
@@ -36,13 +41,17 @@ jobs:
 
       - name: Check active sources
         id: sources
-        continue-on-error: true
         env:
           LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
-        run: >-
-          callbrief source check --all-active --json --limit 100
-          --summary-path live-source-summary.json
-          --live-corpus-path "$LIVE_CORPUS_PATH" > /dev/null
+          SOURCE_LIMIT: ${{ inputs.limit }}
+        run: |
+          set +e
+          callbrief source check --all-active --json --limit "$SOURCE_LIMIT" \
+            --summary-path live-source-summary.json \
+            --live-corpus-path "$LIVE_CORPUS_PATH" > /dev/null
+          source_check_exit_code=$?
+          set -e
+          printf 'cli_exit_code=%s\n' "$source_check_exit_code" >> "$GITHUB_OUTPUT"
 
       - name: Summarize live corpus and enforce acceptance
         if: always()
@@ -50,6 +59,7 @@ jobs:
           LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
           TARGET_REF: ${{ inputs.ref }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
+          SOURCE_CHECK_EXIT_CODE: ${{ steps.sources.outputs.cli_exit_code }}
         run: |
           python - <<'PY'
           import json
@@ -121,6 +131,7 @@ jobs:
 
           summary["selected_ref"] = os.environ["TARGET_REF"]
           summary["selected_sha"] = os.environ["TARGET_SHA"]
+          summary["source_check_exit_code"] = int(os.environ["SOURCE_CHECK_EXIT_CODE"])
           rendered_status_by_source = {
               source_id: dict(sorted(counts.items()))
               for source_id, counts in sorted(status_by_source.items())
@@ -184,17 +195,19 @@ jobs:
               "## Live source verification",
               "",
               f"Selected ref: `{summary['selected_ref']}` (`{summary['selected_sha']}`).",
+              f"CallBrief acquisition command exit code: `{summary['source_check_exit_code']}`; source-level results follow.",
               f"Successful active sources: **{successful}/{len(sources)}**; required: **at least 3**.",
               f"Live records: **{len(records)}**; status counts: `{dict(sorted(by_status.items()))}`.",
               f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
               "",
-              "| Source | HTTP | Bytes | Received / accepted / rejected | Pagination | Schema / parser | Error code | Payload SHA / provenance | Source timestamp | Elapsed ms | Gate |",
-              "|---|---:|---:|---:|---|---|---|---|---|---:|---|",
+              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Error code | Payload SHA / provenance | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---:|---|---|---|---|---|---:|---|",
           ]
           for item in sources:
               lines.append(
                   f"| {item.get('source_id')} | {item.get('http_status') or 'failed'} | "
-                  f"{item.get('response_bytes')} | {item.get('rows_received')} / "
+                  f"{item.get('response_bytes')} | {item.get('rows_returned')} / "
+                  f"{item.get('total_results')} | {item.get('rows_received')} / "
                   f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
                   f"{item.get('pagination_state')} | {item.get('schema_status')} / "
                   f"{item.get('parser_result')} | {item.get('error_code') or ''} | "
