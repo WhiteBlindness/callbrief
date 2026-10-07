@@ -40,29 +40,29 @@
     {
       "id": "normalization_available_field_accuracy",
       "definition": "Valores normalizados iguais divididos pelos campos disponíveis tanto no esperado como no observado. Valores ausentes ficam fora do cálculo.",
-      "measured_value": {"available": 165, "correct": 165, "wrong": 0, "unknown": 0, "score": 1.0, "by_field": {"call_id": {"available": 30, "correct": 30}, "programme": {"available": 30, "correct": 30}, "title": {"available": 30, "correct": 30}, "status": {"available": 25, "correct": 25}, "opening_date": {"available": 19, "correct": 19}, "deadline": {"available": 30, "correct": 30}, "budget_total": {"available": 1, "correct": 1}, "authority": {"available": 0, "correct": 0}, "opportunity_type": {"available": 0, "correct": 0}, "geography": {"available": 0, "correct": 0}, "beneficiary_type": {"available": 0, "correct": 0}}},
+      "measured_value": {"available": 185, "correct": 185, "wrong": 0, "unknown": 0, "score": 1.0, "by_field": {"call_id": {"available": 30, "correct": 30}, "programme": {"available": 30, "correct": 30}, "title": {"available": 30, "correct": 30}, "status": {"available": 30, "correct": 30}, "publication_date": {"available": 5, "correct": 5}, "opening_date": {"available": 24, "correct": 24}, "deadline": {"available": 30, "correct": 30}, "deadline_datetime": {"available": 5, "correct": 5}, "budget_total": {"available": 1, "correct": 1}, "authority": {"available": 0, "correct": 0}, "opportunity_type": {"available": 0, "correct": 0}, "geography": {"available": 0, "correct": 0}, "beneficiary_type": {"available": 0, "correct": 0}}},
       "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Campos disponíveis: 30 identificadores, programas e títulos, 25 estados, 19 datas de abertura, 30 prazos e um montante. Autoridade, tipo, geografia e tipo de beneficiário não têm rótulos neste corpus. Transcrição e avaliação numa passagem, sem adjudicação independente."
+      "measurement_note": "Campos disponíveis: 30 identificadores, programas, títulos e estados, cinco datas de publicação, 24 datas de abertura, 30 datas de prazo, cinco horas de prazo com fuso horário e um montante. Autoridade, tipo, geografia e tipo de beneficiário não têm rótulos neste corpus. Transcrição e avaliação numa passagem, sem adjudicação independente."
     },
     {
       "id": "recall_at_5",
       "definition": "Identificadores de avisos relevantes nos primeiros cinco resultados, divididos pelo total de identificadores relevantes anotados.",
-      "measured_value": {"baseline_recall_at_5": 0.9117647058823529, "current_recall_at_5": 0.9117647058823529, "baseline_mrr_at_5": 0.875, "current_mrr_at_5": 0.875, "answerable_queries": 34, "held_out_queries": 40, "development_queries": 19, "total_queries": 59},
+      "measured_value": {"baseline_recall_at_5": 0.9117647058823529, "current_recall_at_5": 0.9117647058823529, "baseline_mrr_at_5": 0.8774509803921569, "current_mrr_at_5": 0.8774509803921569, "answerable_queries": 34, "held_out_queries": 40, "development_queries": 19, "total_queries": 59},
       "status": "measured_manual_single_pass",
       "target": 0.9,
       "requires_human_labels": true,
-      "measurement_note": "Métricas de ordenação nas 34 consultas respondíveis do subconjunto de validação: 0,912 Recall@5 e 0,875 MRR@5, iguais à referência lexical anterior. A avaliação tem 59 consultas, com paráfrases, consultas bilingues e 12 consultas sem resposta repartidas entre calibração e validação. Rótulos manuais de passagem única, sem adjudicação independente."
+      "measurement_note": "Métricas de ordenação nas 34 consultas respondíveis do subconjunto de validação: 0,912 Recall@5 e 0,877 MRR@5, iguais à referência lexical anterior. A avaliação tem 59 consultas, com paráfrases, consultas bilingues e 12 consultas sem resposta repartidas entre calibração e validação. Rótulos manuais de passagem única, sem adjudicação independente."
     },
     {
       "id": "deduplication_precision",
       "definition": "Pares previstos como duplicados e confirmados, divididos por todos os pares previstos como duplicados.",
-      "measured_value": {"predicted": 5, "correct": 5, "precision": 1.0, "recall": 1.0, "missed_duplicate_pairs": 0, "false_positive_pairs": 0, "labelled_pairs": 16, "positive_pairs": 5, "negative_pairs": 11, "real_corpus_negative_pairs": 10, "fixture_negative_pairs": 1},
+      "measured_value": {"predicted": 5, "correct": 5, "precision": 1.0, "recall": 1.0, "missed_duplicate_pairs": 0, "false_positive_pairs": 0, "labelled_pairs": 16, "positive_pairs": 5, "negative_pairs": 11, "real_corpus_negative_pairs": 10, "fixture_negative_pairs": 1, "automatic_merge_precision": 1.0, "automatic_merge_recall": 1.0, "automatic_merge_pairs": 5, "probable_review_candidates": 0, "possible_review_candidates": 0},
       "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Os cinco pares CINEA/Funding & Tenders partilham identificador oficial e programa; as páginas CINEA apontam para o registo canónico no Funding & Tenders. Dez pares negativos do corpus incluem títulos semelhantes, prazos diferentes e tópicos distintos; um décimo primeiro par fixture-only verifica chamadas anuais com identificadores distintos. Correspondência exata automática; resultados prováveis e possíveis ficam para revisão. Rótulos de passagem única, sem adjudicação independente."
+      "measurement_note": "Os cinco pares usam campos transcritos das páginas oficiais da CINEA e a ligação canónica para o Funding & Tenders; o lado Funding & Tenders é um registo de formato API criado a partir dessa ligação, não uma resposta capturada em direto. Dez pares negativos do corpus e um cenário anual controlado não foram unidos. Um teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial. Rótulos de passagem única, sem adjudicação independente."
     },
     {
       "id": "deterministic_eligibility_accuracy",
@@ -76,11 +76,11 @@
     {
       "id": "citation_validity",
       "definition": "Identificadores de citações que apontam para evidência fornecida, divididos por todas as citações produzidas.",
-      "measured_value": {"cited_facts": 165, "valid_exact_excerpt_spans": 165, "score": 1.0, "official_payload_hashes_missing": 30, "provenance_counts": {"MANUALLY_TRANSCRIBED": 165}},
+      "measured_value": {"cited_facts": 185, "valid_exact_excerpt_spans": 185, "score": 1.0, "official_payload_hashes_missing": 30, "provenance_counts": {"MANUALLY_TRANSCRIBED": 185}},
       "status": "measured_manual_excerpt_structure",
       "target": 1.0,
       "requires_human_labels": false,
-      "measurement_note": "Os 165 factos apontam para excertos exatos e ligações registadas no corpus manual. Nenhum dos 30 registos de avaliação tem hash de resposta original; a proveniência não equivale a aquisição automática. As respostas das fontes ativas são agora resumidas com SHA-256 durante a verificação ao vivo, sem conservar corpos protegidos."
+      "measurement_note": "Os 185 factos apontam para excertos estruturados e ligações registadas no corpus manual. Nenhum dos 30 registos de avaliação tem hash de resposta original; a proveniência não equivale a aquisição automática. As respostas das fontes ativas são agora resumidas com SHA-256 durante a verificação em direto, sem conservar corpos protegidos."
     },
     {
       "id": "source_qualification_evidence",
@@ -121,7 +121,7 @@
     {
       "id": "retrieval_no_answer_false_positive_rate",
       "definition": "Consultas sem avisos relevantes anotados que ainda recebem resultados, dividido por todas as consultas sem resposta.",
-      "measured_value": {"baseline_no_answer_precision": 0.6666666666666666, "baseline_no_answer_recall": 0.3333333333333333, "current_no_answer_precision": 0.5555555555555556, "current_no_answer_recall": 0.8333333333333334, "current_no_answer_miss_rate": 0.16666666666666666, "answerable_abstention_rate": 0.11764705882352941, "held_out_no_answer_queries": 6, "total_no_answer_queries": 12, "confidence_threshold": 0.290165, "calibrated_on": "development partition only"},
+      "measured_value": {"baseline_no_answer_precision": 0.5, "baseline_no_answer_recall": 0.16666666666666666, "current_no_answer_precision": 0.5555555555555556, "current_no_answer_recall": 0.8333333333333334, "current_no_answer_miss_rate": 0.16666666666666666, "answerable_abstention_rate": 0.11764705882352941, "held_out_no_answer_queries": 6, "total_no_answer_queries": 12, "confidence_threshold": 0.290165, "calibrated_on": "development partition only"},
       "status": "measured_manual_single_pass",
       "target": 0.0,
       "requires_human_labels": true,
@@ -129,12 +129,12 @@
     },
     {
       "id": "live_source_check_success_count",
-      "definition": "Consultas HTTP de verificação de fonte concluídas com uma resposta interpretável nesta máquina.",
+      "definition": "Adaptadores de fonte validados por pedidos HTTP reais num agente GitHub-hosted.",
       "measured_value": null,
-      "status": "awaiting_manual_workflow_dispatch",
+      "status": "not_run",
       "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "A validação automática decorre no workflow manual do GitHub Actions, que usa um agente GitHub-hosted e falha se qualquer fonte ativa não produzir registos válidos. A contagem só será atualizada após executar esse workflow."
+      "measurement_note": "O workflow manual do GitHub Actions foi acrescentado, mas ainda não correu. O evento workflow_dispatch só é aceite quando o ficheiro está no ramo predefinido. Por isso, não há contagem de fontes validadas em direto."
     },
     {
       "id": "source_supported_eligibility_examples",

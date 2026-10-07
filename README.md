@@ -11,7 +11,7 @@ CallBrief reúne avisos públicos, conserva a origem de cada facto e compara opo
 - 30 oportunidades reais, atuais ou recentes, de Portugal e de programas da União Europeia.
 - 59 consultas de recuperação com rótulos manuais: 19 para calibração e 40 para validação, incluindo 12 consultas sem resposta.
 - Normalização de identificadores, programas, datas, orçamento e campos de candidatura, com evidência para excertos e ligações oficiais.
-- Correspondência exata dos cinco pares CINEA/Funding & Tenders, com dez pares negativos e sem associação automática de candidatos possíveis ou prováveis.
+- Correspondência exata testada nos cinco pares CINEA/Funding & Tenders, com dez pares negativos do corpus e um caso anual controlado. Os candidatos prováveis e possíveis ficam para revisão.
 - Avaliações de elegibilidade sustentadas por um campo oficial de tipo de beneficiário, além de isolamento por espaço de trabalho e cliente.
 - Regras de elegibilidade determinísticas, histórico de alterações e fila local de notificações.
 
@@ -21,11 +21,11 @@ CallBrief reúne avisos públicos, conserva a origem de cada facto e compara opo
 | --- | --- | --- | --- |
 | [Funding & Tenders](https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/support/apis) | Subvenções e avisos de programas da UE | API JSON ativa | Condições específicas dos dados da API por confirmar |
 | [TED](https://docs.ted.europa.eu/api/latest/search.html) | Contratação pública, não subvenções | API de pesquisa ativa | Reutilização documentada ([aviso legal](https://ted.europa.eu/en/legal-notice)), sujeita às regras de utilização adequada |
-| [CINEA, avisos LIFE 2026](https://cinea.ec.europa.eu/life-calls-proposals-2026_en) | Títulos, prazos e ligações para avisos LIFE | Lista HTML ativa | Reutilização geral da Comissão com atribuição, salvo exceções e direitos de terceiros ([aviso legal](https://commission.europa.eu/legal-notice_en)) |
+| [CINEA, avisos LIFE 2026](https://cinea.ec.europa.eu/life-calls-proposals-2026_en) | Identificadores, programas, estados, datas e ligações para avisos LIFE | Lista e páginas de detalhe em HTML | Reutilização geral da Comissão com atribuição, salvo exceções e direitos de terceiros ([aviso legal](https://commission.europa.eu/legal-notice_en)) |
 | [COMPETE 2030](https://compete2030.gov.pt/avisos/) | Avisos nacionais | Sem adaptador ativo | A reutilização automática aguarda esclarecimento dos termos |
 | [Plano Anual de Avisos Portugal 2030](https://portugal2030.pt/plano-anual-de-avisos/) | Previsões de avisos futuros, nunca confirmação de abertura | Adaptador XLSX ativo, com campos selecionados e ligação à origem | Os termos do ficheiro exigem confirmação; redistribuição comercial desativada |
 
-A API TED permite pesquisar avisos publicados e a documentação descreve utilização para análise e reutilização. A página da CINEA serve para descobrir prazos LIFE; a ligação para cada aviso completo aponta para o Funding & Tenders. A CINEA funciona como fonte de descoberta da agência e o Funding & Tenders como registo canónico do programa. A política geral da Comissão prevê reutilização com atribuição salvo indicação em contrário ou direitos de terceiros. Isso não confirma, por si só, as condições de cada dado devolvido pela API.
+A API TED permite pesquisar avisos publicados e a documentação descreve utilização para análise e reutilização. A lista LIFE da CINEA encaminha para páginas de detalhe que publicam a referência oficial, o estado, as datas e a ligação direta para o Funding & Tenders. O adaptador usa a CINEA como fonte de descoberta da agência e o Funding & Tenders como registo canónico do programa. A política geral da Comissão prevê reutilização com atribuição salvo indicação em contrário ou direitos de terceiros. Isso não confirma, por si só, as condições de cada dado devolvido pela API.
 
 O [Plano Anual de Avisos](https://portugal2030.pt/plano-anual-de-avisos/) descreve o XLSX para consulta como aberto, pesquisável e editável. A página liga o [ficheiro XLSX do plano de setembro de 2026 a agosto de 2027](https://portugal2030.pt/wp-content/uploads/sites/3/2026/09/PlanoAnualAvisos_download_140926-1.xlsx), que serve tecnicamente como fonte canónica de previsões: contém identificadores, programas e datas previstas. Não confirma que um aviso esteja formalmente aberto. Não foi localizada uma licença específica para este ficheiro. Por isso, o adaptador conserva apenas campos selecionados e a ligação à origem; a redistribuição comercial continua desativada até a AD&C esclarecer as condições. Esta decisão sobre o ficheiro não altera a política aplicada ao conteúdo geral do portal.
 
@@ -94,7 +94,7 @@ callbrief discover --source eu_funding_tenders --query "SME research" --database
 callbrief opportunity list --database callbrief.sqlite3
 ```
 
-`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. Para verificar todas as fontes ativas num agente GitHub-hosted, iniciar manualmente o workflow `Live source checks` em GitHub Actions. O workflow falha se uma fonte não produzir registos válidos; guarda apenas um resumo compacto como artefacto. O corpus normalizado da execução fica no diretório temporário do agente e não é carregado como artefacto.
+`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. O workflow manual `Live source checks` verifica todas as fontes ativas num agente alojado pelo GitHub e falha se alguma não produzir registos válidos. Guarda apenas um resumo compacto como artefacto; o corpus normalizado fica no diretório temporário do agente. O fluxo está preparado, mas ainda não há uma execução de aquisição em direto validada.
 
 ```powershell
 callbrief source check --all-active --json
@@ -152,20 +152,22 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | Medida | Resultado | Leitura |
 | --- | ---: | --- |
 | Adaptadores oficiais ativos no catálogo | 4 | Funding & Tenders, TED, CINEA e Plano Anual Portugal 2030; o Plano Anual só contém previsões |
-| Verificação de fontes em direto | Workflow manual do GitHub Actions | O agente faz pedidos HTTP reais; consultar o resumo compacto da execução mais recente |
+| Verificação de fontes em direto | Pendente | O fluxo manual está preparado; ainda não há uma execução num agente alojado pelo GitHub |
 | Registos reais na amostra manual | 30 | 10 COMPETE, 15 Funding & Tenders e 5 CINEA |
 | Consultas de recuperação | 59 | 47 com resposta relevante e 12 sem resposta, divididas entre desenvolvimento e validação |
 | *Recall@5*, referência e pesquisa atual | 0,912 e 0,912 | Nas 34 consultas respondíveis de validação; não há melhoria de ordenação medida |
-| MRR@5, referência e pesquisa atual | 0,875 e 0,875 | Os métodos têm a mesma posição recíproca média neste conjunto |
+| MRR@5, referência e pesquisa atual | 0,877 e 0,877 | Os métodos têm a mesma posição recíproca média neste conjunto |
 | Abstenção, precisão e sensibilidade | 0,556 e 0,833 | Seis consultas de validação sem resposta; 11,8% das consultas respondíveis também foram recusadas |
-| Normalização de campos do corpus principal | 165/165 corretos, 1,00 | Identificador, programa, título, estado, abertura, prazo e um montante; campos ausentes não entram no cálculo |
+| Normalização de campos do corpus principal | 185/185 corretos, 1,00 | Identificador, programa, título, estado, cinco datas de publicação, 24 datas de abertura, 30 datas-limite, cinco horas com fuso horário e um montante; campos ausentes não entram no cálculo |
 | Normalização das linhas do Plano Anual | Tipo de beneficiário: 2/2; região: 2/2 | Duas linhas manuais; cada campo tem excerto exato e contexto dos filtros oficiais de candidatura |
-| Citações estruturais | 165/165 excertos exatos, 1,00 | Os 30 registos são manuais e não têm hash da resposta original |
+| Citações estruturais | 185/185 excertos estruturados, 1,00 | Os 30 registos são transcritos manualmente e não têm hash das respostas originais |
 | Evidência da condição da prorrogação | 1/1 excerto ligado à oportunidade | PDF e localização preservados no registo manual; não há captura nem hash original |
-| Deduplicação, pares rotulados | Precisão 1,00; sensibilidade 1,00 | Cinco pares CINEA/Funding & Tenders detetados; dez negativos do corpus e um caso anual controlado rejeitados; resultados não exatos exigem revisão |
+| Deduplicação, pares rotulados | Precisão e sensibilidade 1,00 | Cinco pares CINEA/Funding & Tenders correspondem por referência e ligação canónica; dez negativos do corpus e um caso anual controlado não são unidos |
 | Elegibilidade no exemplo de vários clientes | Elegível, 2 inelegíveis e incerto | Entidade privada na RAM; entidade pública na RAM; entidade privada no Alentejo; perfil sem região. As regras citam beneficiário e NUTS II; não há exemplo remediável sustentado |
 
 As medidas de normalização, recuperação, citação e deduplicação não foram validadas por uma segunda pessoa. O desempenho de ordenação da pesquisa atual é igual ao da referência neste conjunto. A abstenção recupera cinco das seis consultas sem resposta, mas também recusa algumas consultas respondíveis. O conjunto de validação é pequeno e os resultados não medem qualidade em produção. A elegibilidade demonstra apenas os campos de tipo de beneficiário e região publicados no Plano Anual; o plano contém previsões e não confirma avisos abertos.
+
+Na avaliação de deduplicação, os campos CINEA são transcritos das páginas oficiais e o lado Funding & Tenders é um registo de formato API criado a partir da ligação canónica. Não é uma resposta da API capturada em direto. O teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial; a aquisição em direto continua pendente.
 
 O conjunto sintético `evals/corpus/scenarios.json` continua a testar elegibilidade, fontes contraditórias, duplicados, alterações, recuperação, conteúdo malicioso e isolamento. Esses cenários não se confundem com os avisos reais. A suite local confirma os comportamentos cobertos pelos testes; não mede isolamento ou qualidade num serviço alojado.
 
@@ -190,7 +192,7 @@ O CI está configurado para Python 3.12, 3.13 e 3.14, além de formatação, an�
 
 ## Limites desta versão
 
-- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes.
+- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes. A aquisição em direto ainda não foi demonstrada.
 - A licença e as condições de reutilização comercial dos dados devolvidos pela API Funding & Tenders precisam de confirmação específica.
 - A recolha dos avisos formalmente abertos do Portugal 2030 e do COMPETE aguarda uma fonte estruturada autorizada ou esclarecimento de reutilização. O adaptador do Plano Anual serve apenas previsões e mantém a redistribuição comercial desativada.
 - Agent-Reach tem testes de contrato com serviço falso; a ligação local real não foi executada e não está disponível no ambiente de nuvem.

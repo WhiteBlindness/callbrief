@@ -14,6 +14,7 @@ def _call(
     identifier: str,
     source: str,
     call_id: str | None = "COMPETE2030-2026-7",
+    topic_id: str | None = None,
     title: str = "Transferência do conhecimento científico e tecnológico",
     authority: str = "COMPETE 2030",
     deadline: datetime | None = None,
@@ -29,6 +30,7 @@ def _call(
         source_record_id=f"record-{identifier}",
         programme="Portugal 2030",
         call_id=call_id,
+        topic_id=topic_id,
         title=title,
         authority=authority,
         canonical_url=url,
@@ -44,15 +46,51 @@ def _call(
 
 
 class DeduplicationTests(unittest.TestCase):
-    def test_same_programme_and_call_identifier_is_a_strong_duplicate(self) -> None:
+    def test_same_programme_and_official_topic_id_is_a_strong_duplicate(self) -> None:
         result = find_duplicate(
-            _call(identifier="a", source="portal-a"),
-            (_call(identifier="b", source="portal-b"),),
+            _call(identifier="a", source="portal-a", topic_id="LIFE-2026-SAP-ENV-GOV"),
+            (
+                _call(
+                    identifier="b",
+                    source="portal-b",
+                    topic_id="LIFE-2026-SAP-ENV-GOV",
+                ),
+            ),
         )
 
         self.assertEqual(result.kind, DuplicateKind.EXACT)
         self.assertEqual(result.canonical_opportunity_id, "b")
-        self.assertIn("call_id", result.matched_by)
+        self.assertIn("topic_id", result.matched_by)
+
+    def test_shared_family_identifier_cannot_merge_distinct_canonical_topics(self) -> None:
+        first = _call(
+            identifier="topic-d2",
+            source="eu_funding_tenders",
+            call_id="HORIZON-CL5-2026-01",
+            topic_id=None,
+            title="Demonstration of clean and competitive solutions for all transport modes",
+            authority="European Commission",
+            url=(
+                "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                "screen/opportunities/topic-details/horizon-cl5-2026-d2-01"
+            ),
+        )
+        second = _call(
+            identifier="topic-d5",
+            source="eu_funding_tenders",
+            call_id="HORIZON-CL5-2026-01",
+            topic_id=None,
+            title="Demonstration of clean and competitive solutions for all transport modes",
+            authority="European Commission",
+            url=(
+                "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                "screen/opportunities/topic-details/horizon-cl5-2026-d5-01"
+            ),
+        )
+
+        result = find_duplicate(first, (second,))
+
+        self.assertEqual(result.kind, DuplicateKind.NONE)
 
     def test_equivalent_canonical_urls_ignore_tracking_parameters(self) -> None:
         result = find_duplicate(

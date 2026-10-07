@@ -10,7 +10,7 @@ import re
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -699,9 +699,12 @@ class _VisibleTextParser(HTMLParser):
         self._visible_length = 0
         self._ends_with_newline = False
         self.anchors: list[_HtmlAnchor] = []
+        self.headings: list[tuple[str, str]] = []
         self._anchor_href: str | None = None
         self._anchor_start = 0
         self._anchor_parts: list[str] = []
+        self._heading_tag: str | None = None
+        self._heading_parts: list[str] = []
 
     @property
     def text(self) -> str:
@@ -715,6 +718,9 @@ class _VisibleTextParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in self._BLOCK_TAGS and self._visible_length and not self._ends_with_newline:
             self._append("\n")
+        if tag in {"h1", "h2", "h3"}:
+            self._heading_tag = tag
+            self._heading_parts = []
         if tag == "a":
             href = next((value for name, value in attrs if name == "href"), None)
             if isinstance(href, str):
@@ -730,6 +736,11 @@ class _VisibleTextParser(HTMLParser):
             )
             self._anchor_href = None
             self._anchor_parts = []
+        if tag == self._heading_tag and self._heading_tag is not None:
+            title = " ".join("".join(self._heading_parts).split())
+            self.headings.append((tag, title))
+            self._heading_tag = None
+            self._heading_parts = []
         if tag in self._BLOCK_TAGS and self._visible_length and not self._ends_with_newline:
             self._append("\n")
 
@@ -737,14 +748,26 @@ class _VisibleTextParser(HTMLParser):
         self._append(data)
         if self._anchor_href is not None:
             self._anchor_parts.append(data)
+        if self._heading_tag is not None:
+            self._heading_parts.append(data)
 
 
 class CineaLifeAdapter:
-    """Extract LIFE call titles and deadlines from CINEA's official listing."""
+    """Extract LIFE call records and canonical links from CINEA's official pages."""
 
     source_id = "cinea_life"
     endpoint = "https://cinea.ec.europa.eu/life-calls-proposals-2026_en"
     _DEADLINE = re.compile(r"Deadline\s+date\s*:\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE)
+    _DETAIL_DATE = re.compile(r"\b(\d{1,2}\s+[A-Za-z]+\s+\d{4})\b", re.IGNORECASE)
+    _DETAIL_DEADLINE_TIME = re.compile(
+        r"^\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*,?\s*"
+        r"(\d{1,2}:\d{2})\s+\((CET|CEST)\)\s*$",
+        re.IGNORECASE,
+    )
+    _CALL_ID = re.compile(r"LIFE-\d{4}(?:-[A-Z0-9]+)+", re.IGNORECASE)
+    _TOPIC_URL = re.compile(
+        r"/opportunities/(?:topic-details|topic-details-tr)/([A-Z0-9-]+)", re.IGNORECASE
+    )
     _MONTHS = {
         "january": 1,
         "february": 2,
@@ -786,7 +809,7 @@ class CineaLifeAdapter:
 
     @staticmethod
     def _official_link(base_url: str, href: str) -> str | None:
-        target = urljoin(base_url, href)
+        target = urljoin(base_url, href.strip())
         parsed = urlparse(target)
         hostname = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
         if hostname == "safelinks.protection.outlook.com" or hostname.endswith(
@@ -815,6 +838,98 @@ class CineaLifeAdapter:
             return None
         return target
 
+    @staticmethod
+    def _value_after_label(text: str, label: str) -> str | None:
+        lines = [line.strip() for line in text.splitlines()]
+        expected = label.casefold().rstrip(":")
+        for index, line in enumerate(lines[:-1]):
+            if line.casefold().rstrip(":") != expected:
+                continue
+            return next((value for value in lines[index + 1 :] if value), None)
+        return None
+
+    @classmethod
+    def _parse_detail(cls, html: str, page_url: str, fallback_title: str) -> dict[str, str] | None:
+        parser = _VisibleTextParser()
+        try:
+            parser.feed(html)
+            parser.close()
+        except (AssertionError, ValueError) as exc:
+            raise SourceError("CINEA detail page contains malformed HTML") from exc
+
+        reference = cls._value_after_label(parser.text, "Reference")
+        if reference is None or cls._CALL_ID.fullmatch(reference) is None:
+            return None
+        canonical_url = None
+        for anchor in parser.anchors:
+            link = cls._official_link(page_url, anchor.href)
+            if link is None:
+                continue
+            parsed_link = urlparse(link)
+            topic_match = cls._TOPIC_URL.search(parsed_link.path)
+            if (
+                parsed_link.hostname == "ec.europa.eu"
+                and topic_match is not None
+                and topic_match.group(1).casefold() == reference.casefold()
+            ):
+                canonical_url = re.sub(r"(?:%20)+$", "", link.rstrip(), flags=re.IGNORECASE)
+                break
+        if canonical_url is None:
+            return None
+
+        programme_name = cls._value_after_label(parser.text, "Funding programme")
+        if programme_name is None:
+            return None
+        programme_match = re.search(r"\(([A-Z][A-Z0-9]{1,10})\)\s*\(\d{4}/\d{4}\)", programme_name)
+        programme = programme_match.group(1) if programme_match else programme_name
+        title = next(
+            (value for tag, value in parser.headings if tag == "h1" and value),
+            fallback_title,
+        )
+        status = cls._value_after_label(parser.text, "Status")
+        publication = cls._value_after_label(parser.text, "Publication date")
+        opening = cls._value_after_label(parser.text, "Opening date")
+        deadline = cls._value_after_label(parser.text, "Deadline date")
+        publication_match = cls._DETAIL_DATE.search(publication or "")
+        opening_match = cls._DETAIL_DATE.search(opening or "")
+        deadline_match = cls._DETAIL_DATE.search(deadline or "")
+        if status is None or opening_match is None or deadline_match is None:
+            return None
+        deadline_source = (deadline or "").strip()
+        deadline_time_match = cls._DETAIL_DEADLINE_TIME.fullmatch(deadline_source)
+        has_deadline_time = re.search(r"\b\d{1,2}:\d{2}\b", deadline_source) is not None
+        if has_deadline_time and deadline_time_match is None:
+            return None
+        deadline_value = deadline_match.group(1)
+        if deadline_time_match is not None:
+            deadline_date, deadline_time, zone_name = deadline_time_match.groups()
+            utc_offset = timedelta(hours=2 if zone_name.casefold() == "cest" else 1)
+            try:
+                deadline_value = (
+                    datetime.strptime(f"{deadline_date} {deadline_time}", "%d %B %Y %H:%M")
+                    .replace(tzinfo=timezone(utc_offset))
+                    .isoformat()
+                )
+            except ValueError:
+                return None
+        record = {
+            "record_id": reference,
+            "topicCode": reference,
+            "callIdentifier": reference,
+            "programme": programme,
+            "programmeName": programme_name,
+            "title": title[:300],
+            "status": status,
+            "openingDate": opening_match.group(1),
+            "deadlineDate": deadline_value,
+            "deadlineSource": deadline_source,
+            "authority": "European Climate, Infrastructure and Environment Executive Agency",
+            "canonicalUrl": canonical_url,
+        }
+        if publication_match is not None:
+            record["publicationDate"] = publication_match.group(1)
+        return record
+
     def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
         return self.fetch_with_report(query, limit=limit).documents
 
@@ -828,10 +943,12 @@ class CineaLifeAdapter:
             html,
             http_status,
             response_bytes,
-            last_modified,
-            payload_hash,
-            provenance,
+            _,
+            _,
+            _,
         ) = _html_response_details(response)
+        if not 200 <= http_status < 300:
+            raise SourceError(f"CINEA listing returned HTTP {http_status}")
         parser = _VisibleTextParser()
         try:
             parser.feed(html)
@@ -848,6 +965,7 @@ class CineaLifeAdapter:
         selected_query = query.strip().casefold()
         documents: list[SourceDocument] = []
         rejected = 0
+        response_bytes_total = response_bytes
         for index, anchor in enumerate(candidates):
             context_end = candidates[index + 1].start if index + 1 < len(candidates) else len(text)
             context = text[anchor.end : context_end]
@@ -860,39 +978,48 @@ class CineaLifeAdapter:
             if due_date is None:
                 rejected += 1
                 continue
-            excerpt_end = anchor.end + match.end()
-            excerpt = text[anchor.start : excerpt_end].strip()
-            heading = re.search(
-                r"\bLIFE\s+calls\s+for\s+proposals\s+2026\b",
-                text,
-                re.IGNORECASE,
-            )
-            if heading is not None:
-                excerpt = f"{heading.group(0)}\n{excerpt}"
             title = anchor.text.strip()
-            searchable_text = f"{title} {excerpt} LIFE 2026".casefold()
+            searchable_text = f"{title} {match.group(1)} LIFE 2026".casefold()
             if selected_query and selected_query not in searchable_text:
                 continue
+            detail_response = self._transport(detail_url, self.timeout_seconds)
+            (
+                detail_html,
+                detail_status,
+                detail_bytes,
+                detail_last_modified,
+                detail_hash,
+                detail_provenance,
+            ) = _html_response_details(detail_response)
+            if not 200 <= detail_status < 300:
+                raise SourceError(f"CINEA detail page returned HTTP {detail_status}")
+            response_bytes_total += detail_bytes
+            source_record = self._parse_detail(detail_html, detail_url, title)
+            if source_record is None:
+                rejected += 1
+                continue
             record_id = f"CINEA-{hashlib.sha256(detail_url.encode('utf-8')).hexdigest()[:24]}"
+            source_record["record_id"] = record_id
+            source_record_text = json.dumps(
+                source_record, ensure_ascii=False, sort_keys=True, indent=2
+            )
             documents.append(
                 SourceDocument(
                     source_id=self.source_id,
-                    source_url=self.endpoint,
+                    source_url=detail_url,
                     retrieved_at=retrieved_at,
                     content_type="text/html; charset=utf-8",
-                    title=title[:300],
-                    text=excerpt,
+                    title=source_record["title"],
+                    text=source_record_text,
                     metadata=(
                         ("record_id", record_id),
-                        ("title", title[:300]),
-                        ("deadline", match.group(1)),
-                        ("programme", "LIFE"),
+                        ("reference", source_record["callIdentifier"]),
                         *(_source_context_metadata(self.source_id)),
                     ),
-                    discovered_links=(detail_url,),
-                    last_modified=last_modified,
-                    provenance_status=provenance,
-                    source_payload_sha256=payload_hash,
+                    discovered_links=(source_record["canonicalUrl"], detail_url),
+                    last_modified=detail_last_modified,
+                    provenance_status=detail_provenance,
+                    source_payload_sha256=detail_hash,
                 )
             )
             if len(documents) >= limit:
@@ -903,7 +1030,7 @@ class CineaLifeAdapter:
             self.source_id,
             tuple(documents),
             http_status,
-            response_bytes,
+            response_bytes_total,
             total,
             pagination,
             len(candidates),

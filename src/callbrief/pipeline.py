@@ -34,6 +34,14 @@ class DiscoveryResult:
         return sum(item.duplicate.kind is DuplicateKind.POSSIBLE for item in self.items)
 
     @property
+    def probable_matches(self) -> int:
+        return sum(item.duplicate.kind is DuplicateKind.PROBABLE for item in self.items)
+
+    @property
+    def review_candidates(self) -> int:
+        return self.probable_matches + self.possible_matches
+
+    @property
     def new_snapshots(self) -> int:
         return sum(item.new_source_snapshot for item in self.items)
 

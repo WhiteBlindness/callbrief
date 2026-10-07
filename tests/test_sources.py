@@ -5,8 +5,10 @@ import json
 import unittest
 from datetime import UTC, datetime
 from io import BytesIO
+from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
+from callbrief.deduplication import DuplicateKind, find_duplicate
 from callbrief.domain import EvidenceProvenance, SourceDocument
 from callbrief.normalization import normalize_source_document
 from callbrief.sources import (
@@ -432,12 +434,16 @@ class SourceAdapterTests(unittest.TestCase):
         )
         html = f"""<!doctype html><html><body>
         <h1>LIFE Calls for proposals 2026</h1>
-        <a href="/funding-opportunities/calls-proposals/example_en">
+        <a href="/funding-opportunities/calls-proposals/life-2026-sap-env-gov_en">
           Standard Action Projects (SAPs) for Environmental Governance
         </a>
         <p>Deadline date: 22 September 2026</p>
         <a href="{safe_link}&amp;data=abc">
-          Standard Action Projects (SAPs) for Climate Governance
+          Standard Action Projects (SAPs) Climate Governance and Information
+        </a>
+        <p>Deadline date: 22 September 2026</p>
+        <a href="/funding-opportunities/calls-proposals/invalid-date_en">
+          Standard Action Projects (SAPs) for a malformed deadline
         </a>
         <p>Deadline date: 22 September 2026</p>
         <a href="https://untrusted.example/call">
@@ -446,24 +452,68 @@ class SourceAdapterTests(unittest.TestCase):
         <p>Deadline date: 22 September 2026</p>
         </body></html>"""
         raw_response = html.encode("utf-8")
-        payload_hash = hashlib.sha256(raw_response).hexdigest()
-        adapter = CineaLifeAdapter(
-            transport=lambda endpoint, timeout: HttpTextResponse(
-                html,
+
+        def detail_page(reference: str, title: str) -> str:
+            topic_slug = reference.casefold()
+            return f"""<!doctype html><html><body>
+            <h1>{title}</h1>
+            <h2>Details</h2>
+            <p>Status</p><p>Closed</p>
+            <p>Reference</p><p>{reference}</p>
+            <p>Publication date</p><p>21 April 2026</p>
+            <p>Opening date</p><p>21 April 2026</p>
+            <p>Deadline date</p><p>22 September 2026, 17:00 (CEST)</p>
+            <p>Funding programme</p>
+            <p>Programme for the Environment and Climate Action (LIFE) (2021/2027)</p>
+            <p>Learn more and apply via the
+              <a href="https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/{topic_slug}">
+                Funding &amp; Tender opportunity portal
+              </a>
+            </p></body></html>"""
+
+        invalid_date_url = (
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/invalid-date_en"
+        )
+        detail_pages = {
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+            "life-2026-sap-env-gov_en": detail_page(
+                "LIFE-2026-SAP-ENV-GOV",
+                "Standard Action Projects (SAPs) for Environmental Governance",
+            ),
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+            "wrapped_en": detail_page(
+                "LIFE-2026-SAP-CLIMA-GOV",
+                "Climate Governance and Information",
+            ),
+            invalid_date_url: detail_page(
+                "LIFE-2026-SAP-INVALID-DATE",
+                "Standard Action Projects (SAPs) for a malformed deadline",
+            ).replace("22 September 2026, 17:00 (CEST)", "31 February 2026, 17:00 (CEST)"),
+        }
+
+        def transport(endpoint: str, timeout: float) -> HttpTextResponse:
+            body = html if endpoint == CineaLifeAdapter.endpoint else detail_pages[endpoint]
+            encoded = body.encode("utf-8")
+            return HttpTextResponse(
+                body,
                 200,
-                len(raw_response),
+                len(encoded),
                 "Tue, 06 Oct 2026 10:00:00 GMT",
-                payload_hash,
+                hashlib.sha256(encoded).hexdigest(),
                 EvidenceProvenance.LIVE_SOURCE_VERIFIED,
             )
-        )
+
+        adapter = CineaLifeAdapter(transport=transport)
 
         result = adapter.fetch_with_report(limit=10)
 
         self.assertEqual(result.http_status, 200)
-        self.assertEqual(result.rows_received, 3)
-        self.assertEqual(result.rejected_rows, 1)
-        self.assertEqual(result.response_bytes, len(html.encode("utf-8")))
+        self.assertEqual(result.rows_received, 4)
+        self.assertEqual(result.rejected_rows, 2)
+        self.assertEqual(
+            result.response_bytes,
+            len(raw_response) + sum(len(value.encode("utf-8")) for value in detail_pages.values()),
+        )
         self.assertEqual(result.pagination_state, "complete")
         self.assertEqual(len(result.documents), 2)
         self.assertIn("22 September 2026", result.documents[0].text)
@@ -471,7 +521,10 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(
             result.documents[0].provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
         )
-        self.assertEqual(result.documents[0].source_payload_sha256, payload_hash)
+        expected_detail_hash = hashlib.sha256(
+            detail_pages[result.documents[0].source_url].encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(result.documents[0].source_payload_sha256, expected_detail_hash)
         self.assertEqual(dict(result.documents[0].metadata)["source_family"], "eu_direct_funding")
         self.assertEqual(
             dict(result.documents[0].metadata)["canonical_source"], "eu_funding_tenders"
@@ -482,18 +535,125 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(
             deadline_evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
         )
-        self.assertEqual(deadline_evidence.source_payload_sha256, payload_hash)
+        self.assertEqual(deadline_evidence.source_payload_sha256, expected_detail_hash)
         self.assertIsNone(deadline_evidence.normalized_snapshot)
         self.assertEqual(
-            {document.discovered_links[0] for document in result.documents},
+            {document.source_url for document in result.documents},
             {
-                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/example_en",
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/life-2026-sap-env-gov_en",
                 "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/wrapped_en",
             },
         )
+        normalized = normalize_source_document(result.documents[0])
+        self.assertEqual(normalized.call_id, "LIFE-2026-SAP-ENV-GOV")
+        self.assertEqual(normalized.topic_id, "LIFE-2026-SAP-ENV-GOV")
+        self.assertEqual(normalized.programme, "LIFE")
+        self.assertEqual(normalized.opening_date.date().isoformat(), "2026-04-21")
+        self.assertEqual(normalized.deadline.date().isoformat(), "2026-09-22")
+        self.assertEqual(
+            normalized.canonical_url,
+            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+            "screen/opportunities/topic-details/life-2026-sap-env-gov",
+        )
+        climate_document = next(
+            document
+            for document in result.documents
+            if dict(document.metadata)["reference"] == "LIFE-2026-SAP-CLIMA-GOV"
+        )
+        climate_opportunity = normalize_source_document(climate_document)
+        self.assertEqual(climate_opportunity.title, "Climate Governance and Information")
+        self.assertEqual(climate_opportunity.deadline.hour, 17)
+        self.assertEqual(climate_opportunity.deadline.utcoffset().total_seconds(), 2 * 60 * 60)
+        climate_source_record = json.loads(climate_document.text)
+        self.assertEqual(climate_source_record["deadlineSource"], "22 September 2026, 17:00 (CEST)")
 
         query_result = adapter.fetch_with_report("LIFE 2026", limit=10)
         self.assertEqual(len(query_result.documents), 2)
+
+    def test_five_cinea_topic_links_reconcile_with_api_shaped_fixtures(self) -> None:
+        repository_root = Path(__file__).resolve().parents[1]
+        corpus = json.loads(
+            (repository_root / "evals" / "real_opportunities.json").read_text(encoding="utf-8")
+        )
+        labels = json.loads(
+            (repository_root / "evals" / "cross_source_deduplication_labels.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        records = {record["id"]: record for record in corpus["records"]}
+        detail_pages: dict[str, str] = {}
+        listing_rows: list[str] = []
+        api_rows: list[dict[str, str]] = []
+        for label in labels["positive_pairs"]:
+            record = records[label["cinea_record_id"]]
+            detail_url = record["source_url"]
+            canonical_url = label["canonical_topic_url"]
+            call_id = label["topic_id"]
+            title = label["title"]
+            listing_title = label.get("listing_title", title)
+            listing_rows.append(
+                f'<a href="{detail_url}">{listing_title}</a><p>Deadline date: 22 September 2026</p>'
+            )
+            detail_pages[detail_url] = f"""<!doctype html><html><body>
+            <h1>{title}</h1>
+            <p>Status</p><p>Closed</p>
+            <p>Reference</p><p>{call_id}</p>
+            <p>Publication date</p><p>21 April 2026</p>
+            <p>Opening date</p><p>21 April 2026</p>
+            <p>Deadline date</p><p>22 September 2026, 17:00 (CEST)</p>
+            <p>Funding programme</p>
+            <p>Programme for the Environment and Climate Action (LIFE) (2021/2027)</p>
+            <a href="{canonical_url}">Funding &amp; Tender opportunity portal</a>
+            </body></html>"""
+            api_rows.append(
+                {
+                    "id": call_id,
+                    "topicCode": call_id,
+                    "callIdentifier": call_id,
+                    "programme": "LIFE (2021/2027)",
+                    "title": title,
+                    "status": "Closed",
+                    "openingDate": label["opening_date"],
+                    "deadlineDate": label.get("deadline_datetime", label["deadline"]),
+                    "url": canonical_url,
+                    "authority": "European Commission",
+                }
+            )
+        listing_html = (
+            "<!doctype html><html><body><h1>LIFE Calls for proposals 2026</h1>"
+            + "".join(listing_rows)
+            + "</body></html>"
+        )
+
+        def cinea_transport(endpoint: str, timeout: float) -> str:
+            return listing_html if endpoint == CineaLifeAdapter.endpoint else detail_pages[endpoint]
+
+        cinea_documents = CineaLifeAdapter(transport=cinea_transport).fetch(
+            limit=len(labels["positive_pairs"])
+        )
+        funding_documents = FundingTendersAdapter(
+            transport=lambda *args: {"total": len(api_rows), "results": api_rows}
+        ).fetch(limit=len(api_rows))
+        cinea_calls = {
+            normalize_source_document(document).call_id: normalize_source_document(document)
+            for document in cinea_documents
+        }
+        funding_calls = {
+            normalize_source_document(document).call_id: normalize_source_document(document)
+            for document in funding_documents
+        }
+
+        self.assertEqual(len(cinea_calls), 5)
+        self.assertEqual(len(funding_calls), 5)
+        for label in labels["positive_pairs"]:
+            cinea = cinea_calls[label["topic_id"]]
+            funding = funding_calls[label["topic_id"]]
+            result = find_duplicate(cinea, (funding,))
+            self.assertEqual(result.kind, DuplicateKind.EXACT)
+            self.assertIn("canonical_url", result.matched_by)
+            self.assertNotEqual(cinea.authority, funding.authority)
+            self.assertEqual(cinea.opening_date, funding.opening_date)
+            self.assertEqual(cinea.deadline, funding.deadline)
 
     def test_ted_adapter_maps_public_notices_and_reports_pagination(self) -> None:
         captured: list[tuple[str, dict[str, str], dict[str, object], float]] = []

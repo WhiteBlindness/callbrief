@@ -534,12 +534,15 @@ def _discover(args: argparse.Namespace) -> int:
     print(
         f"Registos recebidos: {len(result.items)}; novas capturas: {result.new_snapshots}; "
         f"duplicados exatos: {result.exact_duplicates}; correspondências para revisão: "
-        f"{result.possible_matches}."
+        f"{result.review_candidates} (prováveis: {result.probable_matches}; "
+        f"possíveis: {result.possible_matches})."
     )
     for item in result.items:
         title = item.opportunity.title or item.opportunity.id
         if item.duplicate.kind.value == "exact":
             suffix = f"variante de {item.duplicate.canonical_opportunity_id}"
+        elif item.duplicate.kind.value == "probable":
+            suffix = "correspondência provável, sem união automática"
         elif item.duplicate.kind.value == "possible":
             suffix = "correspondência possível, sem união automática"
         else:

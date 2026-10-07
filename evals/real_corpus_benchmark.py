@@ -34,8 +34,8 @@ from callbrief.domain import (
 from callbrief.eligibility import assess_eligibility
 from callbrief.evaluation import deduplication_precision, recall_at_k
 from callbrief.normalization import normalize_source_document
-from callbrief.storage import SqliteStore
 from callbrief.sources import load_source_registry
+from callbrief.storage import SqliteStore
 
 from .retrieval_benchmark import _legacy_rank
 
@@ -64,7 +64,9 @@ def _document(record: dict[str, Any]) -> SourceDocument:
             "CINEA-" + hashlib.sha256(record["source_url"].encode("utf-8")).hexdigest()[:24]
         )
     registry_source_id = "cinea" if record["source_id"] == "cinea_life" else record["source_id"]
-    definition = next(item for item in load_source_registry() if item.source_id == registry_source_id)
+    definition = next(
+        item for item in load_source_registry() if item.source_id == registry_source_id
+    )
     metadata = [("record_id", source_record_id)]
     metadata.extend(
         (name, value)
@@ -76,9 +78,7 @@ def _document(record: dict[str, Any]) -> SourceDocument:
         )
         if value is not None
     )
-    source_url = (
-        record["listing_url"] if record["source_id"] == "cinea_life" else record["source_url"]
-    )
+    source_url = record["source_url"]
     source_record: dict[str, Any] = {
         "record_id": source_record_id,
         "callIdentifier": record["id"],
@@ -87,21 +87,32 @@ def _document(record: dict[str, Any]) -> SourceDocument:
         "authority": definition.authority,
         "_transcribed_excerpt": record["evidence_excerpt"],
     }
+    if record["source_id"] == "cinea_life":
+        source_record["topicCode"] = record["id"]
+    if record.get("programme_name"):
+        source_record["programmeName"] = record["programme_name"]
     if record.get("status_source"):
         source_record["status"] = record["status_source"]
     if record.get("opening_date"):
         source_record["openingDate"] = record["opening_date"]
+    if record.get("publication_date"):
+        source_record["publicationDate"] = record["publication_date"]
     if record.get("deadline"):
         source_record["deadlineDate"] = record["deadline"]
+    if record.get("deadline_datetime"):
+        source_record["deadlineDate"] = record["deadline_datetime"]
+        source_record["deadlineSource"] = record.get("deadline_source", "")
     for claim in record.get("source_claims", []):
         if claim.get("field") == "funding_size":
-            source_record["Dotação Global"] = claim["excerpt"].split("Dotação Global", 1)[-1].strip()
-    if record["source_id"] == "cinea_life":
-        source_record["topicCode"] = record["id"]
+            source_record["Dotação Global"] = (
+                claim["excerpt"].split("Dotação Global", 1)[-1].strip()
+            )
     discovery_links = (record["source_url"],)
     if record["source_id"] == "cinea_life":
-        mirror_url = record.get("mirror_source_url")
-        discovery_links = tuple(link for link in (mirror_url, record["source_url"]) if link)
+        canonical_url = record.get("canonical_topic_url")
+        discovery_links = tuple(
+            link for link in (canonical_url, record["source_url"]) if isinstance(link, str)
+        )
     return SourceDocument(
         source_id=record["source_id"],
         source_url=source_url,
@@ -127,8 +138,10 @@ def _normalization_report(
         "programme",
         "title",
         "status",
+        "publication_date",
         "opening_date",
         "deadline",
+        "deadline_datetime",
         "budget_total",
     )
     unavailable_fields = (
@@ -157,9 +170,10 @@ def _normalization_report(
             source_url = claim.get("source_url")
             location = claim.get("evidence_location")
             field_name = claim.get("field")
-            if not all(isinstance(value, str) and value.strip() for value in (
-                excerpt, source_url, location, field_name
-            )):
+            if not all(
+                isinstance(value, str) and value.strip()
+                for value in (excerpt, source_url, location, field_name)
+            ):
                 raise ValueError("source qualification is missing its quote, URL, or location")
             qualification_document = SourceDocument(
                 source_id=record["source_id"],
@@ -194,9 +208,7 @@ def _normalization_report(
             opportunity = replace(
                 opportunity, evidence=(*opportunity.evidence, *qualification_evidence)
             )
-            qualification_reports_start = len(qualification_reports) - len(
-                qualification_evidence
-            )
+            qualification_reports_start = len(qualification_reports) - len(qualification_evidence)
             for claim_report in qualification_reports[qualification_reports_start:]:
                 claim_report["preserved_on_opportunity"] = any(
                     evidence.evidence_id == claim_report["evidence_id"]
@@ -208,6 +220,8 @@ def _normalization_report(
         reference.setdefault("programme", record["programme"])
         if record.get("opening_date"):
             reference.setdefault("opening_date", record["opening_date"])
+        if record.get("deadline_datetime"):
+            reference.setdefault("deadline_datetime", record["deadline_datetime"])
         for claim in record.get("source_claims", []):
             if claim.get("field") == "funding_size":
                 reference["budget_total"] = "182500000.00"
@@ -216,10 +230,16 @@ def _normalization_report(
             "programme": opportunity.programme,
             "title": opportunity.title,
             "status": opportunity.status.value,
+            "publication_date": opportunity.publication_date.date().isoformat()
+            if opportunity.publication_date is not None
+            else None,
             "opening_date": opportunity.opening_date.date().isoformat()
             if opportunity.opening_date is not None
             else None,
             "deadline": opportunity.deadline.date().isoformat()
+            if opportunity.deadline is not None
+            else None,
+            "deadline_datetime": opportunity.deadline.isoformat()
             if opportunity.deadline is not None
             else None,
             "budget_total": str(opportunity.budget_total)
@@ -235,7 +255,9 @@ def _normalization_report(
             actual = observed[field_name]
             if actual is None:
                 counter["unknown"] += 1
-            elif field_name in {"opening_date", "deadline"} and isinstance(expected, str):
+            elif field_name in {"publication_date", "opening_date", "deadline"} and isinstance(
+                expected, str
+            ):
                 if actual == _expected_date(expected):
                     counter["correct"] += 1
                 else:
@@ -251,29 +273,33 @@ def _normalization_report(
                 "programme": ("programme",),
                 "title": ("title",),
                 "status": ("status",),
+                "publication_date": ("publicationDate",),
                 "opening_date": ("openingDate",),
                 "deadline": ("deadlineDate",),
+                "deadline_datetime": ("deadlineDate",),
                 "budget_total": ("Dotação Global",),
             }.get(field_name, (field_name,))
             citation = next(
-                (evidence_by_section.get(section) for section in citation_sections
-                 if evidence_by_section.get(section) is not None),
+                (
+                    evidence_by_section.get(section)
+                    for section in citation_sections
+                    if evidence_by_section.get(section) is not None
+                ),
                 None,
             )
             span_valid = (
                 citation is not None
                 and document.text[citation.start : citation.end] == citation.excerpt
-                and citation.url
-                == (
-                    record["listing_url"]
-                    if record["source_id"] == "cinea_life"
-                    else record["source_url"]
-                )
+                and citation.url == record["source_url"]
                 and citation.source_hash == document.content_hash
                 and bool(citation.excerpt)
             )
             expected_value = expected
-            if field_name in {"opening_date", "deadline"} and isinstance(expected, str):
+            if field_name in {
+                "publication_date",
+                "opening_date",
+                "deadline",
+            } and isinstance(expected, str):
                 expected_value = _expected_date(expected)
             elif field_name == "budget_total":
                 expected_value = str(Decimal(str(expected)))
@@ -301,7 +327,9 @@ def _normalization_report(
                 "valid_exact_excerpt_spans": citation_valid,
                 "score": citation_valid / citation_count if citation_count else None,
                 "official_payload_hashes_missing": missing_payload_hashes,
-                "provenance_counts": {EvidenceProvenance.MANUALLY_TRANSCRIBED.value: citation_count},
+                "provenance_counts": {
+                    EvidenceProvenance.MANUALLY_TRANSCRIBED.value: citation_count
+                },
                 "scope": (
                     "Exact spans in manually transcribed structured records, with source URLs; "
                     "these spans do not prove that an original HTTP response was archived."
@@ -311,16 +339,15 @@ def _normalization_report(
                 "claims": qualification_reports,
                 "available": len(qualification_reports),
                 "valid_exact_excerpt_spans": sum(
-                    item["valid_exact_excerpt_span"] is True
-                    for item in qualification_reports
+                    item["valid_exact_excerpt_span"] is True for item in qualification_reports
                 ),
                 "preserved_on_opportunity": sum(
-                    item["preserved_on_opportunity"] is True
-                    for item in qualification_reports
+                    item["preserved_on_opportunity"] is True for item in qualification_reports
                 ),
                 "scope": (
                     "Exact spans and source links are preserved in the local sample and "
-                    "derived opportunity evidence; the official PDF body and hash were not archived."
+                    "derived opportunity evidence; the official PDF body and hash were not "
+                    "archived."
                 ),
             },
         },
@@ -426,9 +453,7 @@ def _retrieval_report(
                 baseline_no_answer_true_positives += baseline_abstained
                 current_no_answer_true_positives += current_abstained
             baseline_no_answer_predictions += not baseline
-            current_no_answer_predictions += (
-                decision.status is RetrievalStatus.NO_SUPPORTED_RESULT
-            )
+            current_no_answer_predictions += decision.status is RetrievalStatus.NO_SUPPORTED_RESULT
 
     baseline_no_answer_false_negatives = no_answer_count - baseline_no_answer_true_positives
     current_no_answer_false_negatives = no_answer_count - current_no_answer_true_positives
@@ -443,7 +468,9 @@ def _retrieval_report(
         "abstention_calibration": {
             "partition": "development",
             "queries": len(development),
-            "method": "threshold maximizing balanced accuracy for answerable versus no-answer queries",
+            "method": (
+                "threshold maximizing balanced accuracy for answerable versus no-answer queries"
+            ),
             "confidence_threshold": abstention_threshold,
             "development_balanced_accuracy": calibration_score,
             "runtime_threshold_rounding": "ceiling to six decimal places",
@@ -467,9 +494,7 @@ def _retrieval_report(
                 baseline_no_answer_true_positives, baseline_no_answer_predictions
             ),
             "no_answer_recall": _ratio(baseline_no_answer_true_positives, no_answer_count),
-            "no_answer_miss_rate": _ratio(
-                baseline_no_answer_false_negatives, no_answer_count
-            ),
+            "no_answer_miss_rate": _ratio(baseline_no_answer_false_negatives, no_answer_count),
         },
         "current": {
             "algorithm": "CallBrief normalized BM25",
@@ -482,9 +507,7 @@ def _retrieval_report(
                 current_no_answer_true_positives, current_no_answer_predictions
             ),
             "no_answer_recall": _ratio(current_no_answer_true_positives, no_answer_count),
-            "no_answer_miss_rate": _ratio(
-                current_no_answer_false_negatives, no_answer_count
-            ),
+            "no_answer_miss_rate": _ratio(current_no_answer_false_negatives, no_answer_count),
             "answerable_abstention_rate": _ratio(
                 current_abstentions_on_answerable, answerable_count
             ),
@@ -498,7 +521,9 @@ def _retrieval_report(
     }
 
 
-def _calibrate_abstention_threshold(confidence_labels: list[tuple[float, bool]]) -> tuple[float, float]:
+def _calibrate_abstention_threshold(
+    confidence_labels: list[tuple[float, bool]],
+) -> tuple[float, float]:
     """Choose a deterministic threshold from development labels only."""
     if not confidence_labels or any(not 0 <= score <= 1 for score, _ in confidence_labels):
         raise ValueError("Calibration needs finite confidence values between zero and one")
@@ -527,11 +552,7 @@ def _calibrate_abstention_threshold(confidence_labels: list[tuple[float, bool]])
 
 def _reciprocal_rank(relevant: list[str], ranked: tuple[str, ...]) -> float:
     return next(
-        (
-            1.0 / (index + 1)
-            for index, identifier in enumerate(ranked)
-            if identifier in relevant
-        ),
+        (1.0 / (index + 1) for index, identifier in enumerate(ranked) if identifier in relevant),
         0.0,
     )
 
@@ -544,26 +565,46 @@ def _ratio(numerator: int, denominator: int) -> float | None:
     return numerator / denominator if denominator else None
 
 
-def _funding_tenders_mirror(record: dict[str, Any]) -> Opportunity:
-    mirror_url = record.get("mirror_source_url")
-    if not isinstance(mirror_url, str):
-        raise ValueError("CINEA record is missing its Funding & Tenders mirror URL")
-    parsed_url = urlparse(mirror_url)
+def _funding_tenders_topic_fixture(record: dict[str, Any]) -> Opportunity:
+    canonical_url = record.get("canonical_topic_url")
+    if not isinstance(canonical_url, str):
+        raise ValueError("CINEA record is missing its canonical Funding & Tenders link")
+    parsed_url = urlparse(canonical_url)
     call_id = parsed_url.path.rstrip("/").rsplit("/", 1)[-1]
     if (
         parsed_url.scheme != "https"
         or parsed_url.hostname != "ec.europa.eu"
-        or not call_id.startswith("LIFE-")
+        or not call_id.upper().startswith("LIFE-")
+        or call_id.casefold() != record["id"].casefold()
     ):
-        raise ValueError("CINEA record has an invalid Funding & Tenders mirror URL")
+        raise ValueError("CINEA record has an invalid canonical Funding & Tenders link")
+    source_record = {
+        "record_id": call_id,
+        "topicCode": call_id,
+        "callIdentifier": call_id,
+        "programme": record["programme"],
+        "title": record["title"],
+        "status": record["status_source"],
+        "openingDate": record["opening_date"],
+        "deadlineDate": record.get("deadline_datetime", record["deadline"]),
+        "url": canonical_url,
+        "authority": "European Commission",
+    }
     document = SourceDocument(
         source_id="eu_funding_tenders",
-        source_url=mirror_url,
+        source_url=canonical_url,
         retrieved_at=RETRIEVED_AT,
-        content_type="text/uri-list",
-        title=call_id,
-        text=mirror_url,
-        metadata=(("record_id", call_id), ("callIdentifier", call_id), ("programme", "LIFE")),
+        content_type="application/json",
+        title=record["title"],
+        text=json.dumps(source_record, ensure_ascii=False, sort_keys=True, indent=2),
+        metadata=(
+            ("record_id", call_id),
+            ("source_family", "eu_direct_funding"),
+            ("source_role", "canonical"),
+            ("canonical_source", "eu_funding_tenders"),
+            ("authority_relationship", "canonical_programme_record"),
+        ),
+        discovered_links=(canonical_url,),
         provenance_status=EvidenceProvenance.MANUALLY_TRANSCRIBED,
     )
     return normalize_source_document(document)
@@ -600,21 +641,26 @@ def _deduplication_report(
         for record, opportunity in zip(records, opportunities, strict=True)
     }
     expected_pairs: list[tuple[str, str]] = []
-    predicted_pairs: list[tuple[str, str]] = []
+    predicted_merge_pairs: list[tuple[str, str]] = []
+    predicted_candidate_pairs: list[tuple[str, str]] = []
     original_pair_results: list[dict[str, Any]] = []
     probable_review_candidates = 0
     possible_review_candidates = 0
     for label in labels["positive_pairs"]:
-        record = next(
-            item for item in records if item["id"] == label["cinea_record_id"]
-        )
+        record = next(item for item in records if item["id"] == label["cinea_record_id"])
         from_cinea = normalized_by_dataset_id[label["cinea_record_id"]]
-        from_ft = _funding_tenders_mirror(record)
+        if record.get("source_url") != label.get("cinea_source_url"):
+            raise ValueError("CINEA source URL differs from its labelled detail-page URL")
+        if record.get("canonical_topic_url") != label["canonical_topic_url"]:
+            raise ValueError("CINEA source link differs from its labelled canonical topic URL")
+        from_ft = _funding_tenders_topic_fixture(record)
         prediction = find_duplicate(from_ft, (from_cinea,))
         pair = tuple(sorted((from_cinea.id, from_ft.id)))
         expected_pairs.append(pair)
+        if prediction.kind is not DuplicateKind.NONE:
+            predicted_candidate_pairs.append(pair)
         if prediction.kind is DuplicateKind.EXACT:
-            predicted_pairs.append(pair)
+            predicted_merge_pairs.append(pair)
         elif prediction.kind is DuplicateKind.PROBABLE:
             probable_review_candidates += 1
         elif prediction.kind is DuplicateKind.POSSIBLE:
@@ -623,15 +669,22 @@ def _deduplication_report(
             {
                 "topic_id": label["topic_id"],
                 "programme_id": label["programme_id"],
-                "cinea_title": label["title"],
+                "cinea_listing_title": label.get("listing_title", label["title"]),
+                "cinea_detail_title": label["title"],
                 "cinea_source_url": record["source_url"],
                 "funding_tenders_topic_url": label["canonical_topic_url"],
+                "canonical_topic_url": record["canonical_topic_url"],
+                "call_id": record["id"],
+                "programme": record["programme_name"],
                 "opening_date": label["opening_date"],
                 "deadline": label["deadline"],
+                "deadline_datetime": label.get("deadline_datetime"),
                 "action": label["action"],
                 "cinea_authority": label["cinea_authority"],
                 "canonical_authority": label["canonical_authority"],
-                "authority_relationship": "agency discovery presentation to canonical programme record",
+                "authority_relationship": (
+                    "agency discovery presentation to canonical programme record"
+                ),
                 "result": prediction.kind.value,
                 "matched_by": list(prediction.matched_by),
                 "detected": prediction.kind is DuplicateKind.EXACT,
@@ -640,6 +693,7 @@ def _deduplication_report(
 
     labelled_pairs = list(expected_pairs)
     false_positive_pairs: list[tuple[str, str]] = []
+    false_positive_candidate_pairs: list[tuple[str, str]] = []
     negative_results: list[dict[str, Any]] = []
     for negative in labels["negative_pairs"]:
         left_id, right_id = negative["left_id"], negative["right_id"]
@@ -648,13 +702,18 @@ def _deduplication_report(
         pair = tuple(sorted((left.id, right.id)))
         labelled_pairs.append(pair)
         prediction = find_duplicate(left, (right,))
+        if prediction.kind is not DuplicateKind.NONE:
+            false_positive_candidate_pairs.append(pair)
         if prediction.kind is DuplicateKind.EXACT:
             false_positive_pairs.append(pair)
-            predicted_pairs.append(pair)
+            predicted_merge_pairs.append(pair)
+            predicted_candidate_pairs.append(pair)
         elif prediction.kind is DuplicateKind.PROBABLE:
             probable_review_candidates += 1
+            predicted_candidate_pairs.append(pair)
         elif prediction.kind is DuplicateKind.POSSIBLE:
             possible_review_candidates += 1
+            predicted_candidate_pairs.append(pair)
         negative_results.append(
             {
                 "left_id": left_id,
@@ -670,13 +729,18 @@ def _deduplication_report(
         pair = tuple(sorted((left.id, right.id)))
         labelled_pairs.append(pair)
         prediction = find_duplicate(left, (right,))
+        if prediction.kind is not DuplicateKind.NONE:
+            false_positive_candidate_pairs.append(pair)
         if prediction.kind is DuplicateKind.EXACT:
             false_positive_pairs.append(pair)
-            predicted_pairs.append(pair)
+            predicted_merge_pairs.append(pair)
+            predicted_candidate_pairs.append(pair)
         elif prediction.kind is DuplicateKind.PROBABLE:
             probable_review_candidates += 1
+            predicted_candidate_pairs.append(pair)
         elif prediction.kind is DuplicateKind.POSSIBLE:
             possible_review_candidates += 1
+            predicted_candidate_pairs.append(pair)
         negative_results.append(
             {
                 "left_id": left.id,
@@ -687,21 +751,34 @@ def _deduplication_report(
                 "matched_by": list(prediction.matched_by),
             }
         )
-    metric = deduplication_precision(expected_pairs, predicted_pairs)
+    candidate_metric = deduplication_precision(expected_pairs, predicted_candidate_pairs)
+    merge_metric = deduplication_precision(expected_pairs, predicted_merge_pairs)
     return {
         "labelled_pairs": len(labelled_pairs),
         "positive_cross_source_pairs": len(expected_pairs),
         "negative_similar_call_pairs": len(labels["negative_pairs"]),
         "fixture_negative_pairs": len(labels.get("fixture_negative_pairs", [])),
-        "predicted_duplicate_pairs": metric["predicted"],
-        "correct_duplicate_pairs": metric["correct"],
-        "precision": metric["score"],
-        "recall": metric["correct"] / len(expected_pairs) if expected_pairs else None,
-        "missed_duplicate_pairs": len(expected_pairs) - metric["correct"],
+        "predicted_duplicate_pairs": candidate_metric["predicted"],
+        "correct_duplicate_pairs": candidate_metric["correct"],
+        "precision": candidate_metric["score"],
+        "recall": (candidate_metric["correct"] / len(expected_pairs) if expected_pairs else None),
+        "missed_duplicate_pairs": len(expected_pairs) - candidate_metric["correct"],
+        "automatic_merge_precision": merge_metric["score"],
+        "automatic_merge_recall": (
+            merge_metric["correct"] / len(expected_pairs) if expected_pairs else None
+        ),
+        "automatic_merge_pairs": merge_metric["predicted"],
         "false_positive_pairs": len(false_positive_pairs),
+        "false_positive_candidate_pairs": len(false_positive_candidate_pairs),
         "probable_review_candidates": probable_review_candidates,
         "possible_review_candidates": possible_review_candidates,
         "automatic_merge_policy": "EXACT only; PROBABLE and POSSIBLE remain review candidates",
+        "positive_pair_evaluation_scope": (
+            "CINEA fields and its linked canonical topic URL are transcribed inputs. The "
+            "Funding & Tenders side is an API-shaped fixture keyed from that URL, not a captured "
+            "API response or live acquisition result. The adapter contract is tested separately "
+            "with source-format fixtures."
+        ),
         "source_family_model": {
             "family": "eu_direct_funding",
             "canonical_source": "eu_funding_tenders",
@@ -712,10 +789,11 @@ def _deduplication_report(
         "negative_pair_results": negative_results,
         "note": (
             "The CINEA page presents each LIFE topic as an agency discovery record and links "
-            "to the canonical Funding & Tenders topic. Equal official topic identifiers and "
-            "programme values provide exact evidence even when the source authorities differ. "
+            "to the canonical Funding & Tenders topic. The CINEA reference and canonical URL "
+            "provide exact evidence even when source authorities differ. "
             "Title similarity alone never triggers an automatic merge."
-            " One recurring-annual-call negative is a controlled fixture, outside the 30-record sample."
+            " One recurring-annual-call negative is a controlled fixture, outside the "
+            "30-record sample."
         ),
     }
 
@@ -847,9 +925,7 @@ def _profile_demo() -> dict[str, Any]:
         profile_opportunities = tuple((profile, private_opportunity) for profile in profiles)
         for profile, opportunity in profile_opportunities:
             store.save_organisation(profile)
-            eligibility = assess_eligibility(
-                opportunity, profile, assessed_at=RETRIEVED_AT
-            )
+            eligibility = assess_eligibility(opportunity, profile, assessed_at=RETRIEVED_AT)
             fit = FitAssessment(
                 organisation_id=profile.id,
                 opportunity_id=opportunity.id,
@@ -942,7 +1018,6 @@ def run_benchmark() -> dict[str, Any]:
     records = dataset["records"]
     queries = dataset["queries"]
     normalization, opportunities = _normalization_report(records)
-    normalized_by_id = {item.source_record_id: item for item in opportunities}
     return {
         "dataset_checked_on": dataset["dataset"]["checked_on"],
         "unique_real_opportunities": len(records),

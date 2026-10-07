@@ -25,6 +25,99 @@ from callbrief.storage import SqliteStore
 
 
 class CliTests(unittest.TestCase):
+    def test_discover_counts_probable_matches_as_review_candidates(self) -> None:
+        now = datetime(2026, 10, 7, tzinfo=UTC)
+        deadline = datetime(2026, 9, 22, tzinfo=UTC)
+        title = "Standard Action Projects for Environmental Governance"
+        canonical_url = (
+            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+            "screen/opportunities/topic-details/life-2026-sap-env-gov"
+        )
+        candidate_document = SourceDocument(
+            source_id="cinea_life",
+            source_url=(
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+                "life-2026-sap-env-gov_en"
+            ),
+            retrieved_at=now,
+            content_type="application/json",
+            title=title,
+            text=json.dumps(
+                {
+                    "record_id": "CINEA-record",
+                    "title": title,
+                    "programme": "LIFE",
+                    "deadlineDate": "2026-09-22",
+                }
+            ),
+            metadata=(
+                ("record_id", "CINEA-record"),
+                ("source_family", "eu_direct_funding"),
+                ("source_role", "discovery"),
+                ("canonical_source", "eu_funding_tenders"),
+                (
+                    "authority_relationship",
+                    "agency_presentation_to_canonical_topic",
+                ),
+            ),
+        )
+
+        class Adapter:
+            source_id = "cinea_life"
+
+            def fetch(self, query: str = "", *, limit: int = 50):
+                return (candidate_document,)
+
+        with tempfile.TemporaryDirectory(dir=Path(__file__).resolve().parent) as temporary:
+            database = Path(temporary) / "calls.sqlite3"
+            with SqliteStore(database) as store:
+                store.save_opportunity(
+                    Opportunity(
+                        id="funding-tenders-record",
+                        source_id="eu_funding_tenders",
+                        source_record_id="LIFE-2026-SAP-ENV-GOV",
+                        programme="LIFE",
+                        call_id="LIFE-2026-SAP-ENV-GOV",
+                        title=title,
+                        authority="European Commission",
+                        canonical_url=canonical_url,
+                        status=OpportunityStatus.CLOSED,
+                        opportunity_type=OpportunityType.GRANT,
+                        deadline=deadline,
+                        source_retrieved_at=now,
+                        source_family="eu_direct_funding",
+                        source_role="canonical",
+                        canonical_source="eu_funding_tenders",
+                        authority_relationship="canonical_programme_record",
+                    )
+                )
+
+            output = io.StringIO()
+            with (
+                patch(
+                    "callbrief.cli.create_adapter_registry",
+                    return_value={"cinea_life": Adapter()},
+                ),
+                redirect_stdout(output),
+            ):
+                code = main(
+                    [
+                        "discover",
+                        "--source",
+                        "cinea_life",
+                        "--query",
+                        "LIFE",
+                        "--database",
+                        str(database),
+                    ]
+                )
+
+        self.assertEqual(code, 0)
+        self.assertIn(
+            "correspondências para revisão: 1 (prováveis: 1; possíveis: 0)", output.getvalue()
+        )
+        self.assertIn("correspondência provável, sem união automática", output.getvalue())
+
     def test_source_check_all_active_emits_compact_machine_readable_summary(self) -> None:
         definitions = tuple(
             item for item in load_source_registry() if item.enabled and item.status == "active"

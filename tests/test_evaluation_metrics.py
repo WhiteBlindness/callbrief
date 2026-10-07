@@ -175,7 +175,13 @@ class EvaluationMetricsTests(unittest.TestCase):
         )
         self.assertEqual(
             metrics["normalization_available_field_accuracy"]["measured_value"]["available"],
-            165,
+            185,
+        )
+        self.assertEqual(
+            metrics["normalization_available_field_accuracy"]["measured_value"]["by_field"][
+                "deadline_datetime"
+            ],
+            {"available": 5, "correct": 5},
         )
         specific_normalization = metrics["portugal2030_eligibility_field_normalization"][
             "measured_value"
@@ -191,7 +197,7 @@ class EvaluationMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["deduplication_precision"]["measured_value"]["recall"], 1.0)
         self.assertEqual(
             metrics["citation_validity"]["measured_value"]["valid_exact_excerpt_spans"],
-            165,
+            185,
         )
         self.assertEqual(
             metrics["source_qualification_evidence"]["measured_value"]["preserved_on_opportunity"],
@@ -248,13 +254,15 @@ class EvaluationMetricsTests(unittest.TestCase):
         )
         self.assertEqual(report["retrieval"]["no_answer_queries"], 6)
         self.assertEqual(report["retrieval"]["abstention"]["no_answer_recall"], 5 / 6)
-        self.assertEqual(report["normalization"]["available"], 165)
-        self.assertEqual(report["normalization"]["correct"], 165)
-        self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 165)
+        self.assertEqual(report["normalization"]["available"], 185)
+        self.assertEqual(report["normalization"]["correct"], 185)
+        self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 185)
         self.assertEqual(
             report["normalization"]["citation_structure"]["valid_exact_excerpt_spans"],
-            165,
+            185,
         )
+        self.assertEqual(report["normalization"]["fields"]["deadline_datetime"]["available"], 5)
+        self.assertEqual(report["normalization"]["fields"]["deadline_datetime"]["correct"], 5)
         qualification_evidence = report["normalization"]["source_qualifications"]
         self.assertEqual(qualification_evidence["available"], 1)
         self.assertEqual(qualification_evidence["valid_exact_excerpt_spans"], 1)

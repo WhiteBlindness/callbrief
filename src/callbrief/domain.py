@@ -274,6 +274,7 @@ class Opportunity:
     source_role: str | None = None
     canonical_source: str | None = None
     authority_relationship: str | None = None
+    topic_id: str | None = None
 
     def __post_init__(self) -> None:
         for required_value, required_name in (
@@ -290,6 +291,7 @@ class Opportunity:
             (self.source_role, "source_role"),
             (self.canonical_source, "canonical_source"),
             (self.authority_relationship, "authority_relationship"),
+            (self.topic_id, "topic_id"),
         ):
             if optional_value is not None:
                 _required_text(optional_value, optional_name)

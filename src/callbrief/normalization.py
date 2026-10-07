@@ -87,6 +87,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "notice-identifier",
         "ND",
     ),
+    "topic_id": ("topicCode", "topicId", "topic_id", "topic-code"),
     "consortium_rules": ("consortiumRules", "consortiumRequirements"),
     "project_duration": ("projectDuration", "duration"),
     "source_updated_at": ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
@@ -732,6 +733,11 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         source_record_id=record_id,
         programme=programme,
         call_id=call_id,
+        topic_id=(
+            _text(record, _FIELD_ALIASES["topic_id"])
+            if _has_evidence(document, record, _FIELD_ALIASES["topic_id"])
+            else None
+        ),
         title=title,
         authority=authority,
         canonical_url=canonical_url,
