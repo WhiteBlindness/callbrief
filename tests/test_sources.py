@@ -366,10 +366,11 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertTrue(request.full_url.endswith("language=en"))
         form_body = request.data.decode("utf-8")
         self.assertIn(
-            'Content-Disposition: form-data; name="query"; filename="query.json"',
+            'Content-Disposition: form-data; name="query"',
             form_body,
         )
-        self.assertIn("Content-Type: application/json; charset=utf-8", form_body)
+        self.assertNotIn("filename=", form_body)
+        self.assertNotIn("Content-Type: application/json", form_body)
         self.assertIn('"type":["0","1","2","8"]', form_body)
         self.assertIn('"status":["31094501","31094502","31094503"]', form_body)
         self.assertEqual(report.total_results, 0)

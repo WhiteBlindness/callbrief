@@ -302,14 +302,13 @@ def _post_multipart_form_json(
     payload: Mapping[str, object],
     timeout_seconds: float,
 ) -> HttpJsonResponse:
-    """POST a JSON query as a multipart form field to the public F&T API."""
+    """POST a JSON query value in the multipart form field expected by F&T."""
     boundary = f"callbrief-{secrets.token_hex(16)}"
     query = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
     body = b"\r\n".join(
         (
             f"--{boundary}".encode("ascii"),
-            b'Content-Disposition: form-data; name="query"; filename="query.json"',
-            b"Content-Type: application/json; charset=utf-8",
+            b'Content-Disposition: form-data; name="query"',
             b"",
             query,
             f"--{boundary}--".encode("ascii"),
