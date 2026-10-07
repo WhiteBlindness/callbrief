@@ -371,6 +371,36 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(result.rejected_rows, 1)
         self.assertEqual(result.rejection_reasons, (("details_identifier_mismatch", 1),))
 
+    def test_funding_tenders_keeps_api_record_without_inventing_a_canonical_url(self) -> None:
+        topic_id = "HORIZON-CL4-2026-01"
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "metadata": {
+                        "title": ["Digital technologies for industry"],
+                        "callIdentifier": [topic_id],
+                        "frameworkProgramme": ["Horizon Europe"],
+                        "status": ["31094502"],
+                        "deadlineDate": ["2026-12-31"],
+                        "type": ["1"],
+                    },
+                }
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(len(result.documents), 1)
+        self.assertEqual(result.rejected_rows, 0)
+        document = result.documents[0]
+        self.assertEqual(document.source_url, FundingTendersAdapter.endpoint)
+        self.assertEqual(document.discovered_links, ())
+        opportunity = normalize_source_document(document)
+        self.assertEqual(opportunity.call_id, topic_id)
+        self.assertIsNone(opportunity.canonical_url)
+        self.assertEqual(opportunity.title, "Digital technologies for industry")
+
     def test_funding_tenders_rejects_records_without_a_supported_title(self) -> None:
         response = {
             "totalResults": 1,

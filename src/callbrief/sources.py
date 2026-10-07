@@ -1630,11 +1630,15 @@ class FundingTendersAdapter:
                     rejection_reasons.get("missing_supported_title", 0) + 1
                 )
                 continue
-            details_urls = _funding_tenders_details_urls(record)
-            if not details_urls:
+            source_type = _first_text(record, ("type", "metadata.type"))
+            if (
+                source_type is not None
+                and source_type.isdecimal()
+                and source_type not in self.opportunity_type_codes
+            ):
                 rejected += 1
-                rejection_reasons["missing_canonical_details_url"] = (
-                    rejection_reasons.get("missing_canonical_details_url", 0) + 1
+                rejection_reasons["unsupported_opportunity_type"] = (
+                    rejection_reasons.get("unsupported_opportunity_type", 0) + 1
                 )
                 continue
             source_identifiers = tuple(
@@ -1657,6 +1661,7 @@ class FundingTendersAdapter:
                 if isinstance((value := record.get(name)), str) and value.strip()
             )
             source_identifier_tokens = {_identifier_token(value) for value in source_identifiers}
+            details_urls = _funding_tenders_details_urls(record)
             details_url = next(
                 (
                     candidate
@@ -1667,26 +1672,26 @@ class FundingTendersAdapter:
                 ),
                 None,
             )
-            if details_url is None:
+            if details_urls and details_url is None:
                 rejected += 1
                 rejection_reasons["details_identifier_mismatch"] = (
                     rejection_reasons.get("details_identifier_mismatch", 0) + 1
                 )
                 continue
-            source_type = _first_text(record, ("type", "metadata.type"))
-            if (
-                source_type is not None
-                and source_type.isdecimal()
-                and source_type not in self.opportunity_type_codes
-            ):
-                rejected += 1
-                rejection_reasons["unsupported_opportunity_type"] = (
-                    rejection_reasons.get("unsupported_opportunity_type", 0) + 1
+            if details_url is None:
+                api_call_identifier = _first_text(
+                    record,
+                    ("metadata.callIdentifier", "metadata.topicCode", "metadata.topicId"),
                 )
-                continue
+                if api_call_identifier is None or source_type not in self.opportunity_type_codes:
+                    rejected += 1
+                    rejection_reasons["missing_canonical_details_url"] = (
+                        rejection_reasons.get("missing_canonical_details_url", 0) + 1
+                    )
+                    continue
             title = title_value[:300]
             record_id = stable_id[:200]
-            links = (details_url,)
+            links = (details_url,) if details_url is not None else ()
             scalar_metadata = tuple(
                 (key, str(value)[:500])
                 for key, value in record.items()
@@ -1695,7 +1700,7 @@ class FundingTendersAdapter:
             documents.append(
                 SourceDocument(
                     source_id=self.source_id,
-                    source_url=links[0] if links else self.endpoint,
+                    source_url=details_url or self.endpoint,
                     retrieved_at=retrieved_at,
                     content_type="application/json",
                     title=title,
