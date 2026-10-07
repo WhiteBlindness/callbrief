@@ -1337,8 +1337,9 @@ class TedSearchAdapter:
                 "fields": list(self.fields),
                 "page": 1,
                 "limit": limit,
+                "scope": "ACTIVE",
                 "paginationMode": "PAGE_NUMBER",
-                "checkQuerySyntax": True,
+                "checkQuerySyntax": False,
             },
             self.timeout_seconds,
         )
