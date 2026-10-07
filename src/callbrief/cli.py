@@ -18,7 +18,7 @@ from typing import Any
 
 from .agent import AgentError, AgentRunner
 from .corpus import Corpus, CorpusError
-from .domain import FitSignals, OpportunityType, OrganisationProfile
+from .domain import EvidenceProvenance, FitSignals, OpportunityType, OrganisationProfile
 from .eligibility import assess_eligibility
 from .filtering import FilterState, OpportunityFilter, filter_opportunity
 from .normalization import normalize_source_document
@@ -318,11 +318,17 @@ def _source_check(args: argparse.Namespace) -> int:
                 rows_received=len(documents),
             )
     except SourceError as exc:
-        status = re.search(r"HTTP (\d{3})", str(exc))
+        status = exc.http_status
+        if status is None:
+            match = re.search(r"HTTP (\d{3})", str(exc))
+            status = int(match.group(1)) if match else None
         print("Resultado: falhou.")
-        print(f"HTTP: {status.group(1) if status else 'não disponível'}.")
+        print(f"HTTP: {status if status is not None else 'não disponível'}.")
         print("Registos: recebidos 0; aceites 0; rejeitados 0.")
-        print("Tamanho da resposta: não disponível; esquema: não verificado.")
+        response_size = (
+            f"{exc.response_bytes} bytes" if exc.response_bytes is not None else "não disponível"
+        )
+        print(f"Tamanho da resposta: {response_size}; esquema: não verificado.")
         print("Intervalo de datas estruturadas: sem dados estruturados.")
         print("Última atualização declarada pela fonte: desconhecida.")
         print("Paginação: não determinada.")
@@ -475,9 +481,16 @@ def _source_check_all(args: argparse.Namespace) -> int:
                         source_timestamps.add(opportunity.source_updated_at.isoformat())
                     live_records.append(asdict(opportunity))
             except SourceError as exc:
-                status = re.search(r"HTTP (\d{3})", str(exc))
-                http_status = int(status.group(1)) if status else None
-                parser_error = type(exc).__name__
+                http_status = exc.http_status
+                if http_status is None:
+                    status = re.search(r"HTTP (\d{3})", str(exc))
+                    http_status = int(status.group(1)) if status else None
+                response_bytes = exc.response_bytes
+                if exc.source_payload_sha256:
+                    payload_hashes.add(exc.source_payload_sha256)
+                if http_status is not None or exc.source_payload_sha256:
+                    response_provenance_status = EvidenceProvenance.LIVE_SOURCE_VERIFIED.value
+                parser_error = exc.error_code
 
         successful_http = http_status is not None and 200 <= http_status < 300
         schema_status = (
@@ -540,9 +553,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
             provenance_counts[provenance_status] = provenance_counts.get(provenance_status, 0) + 1
     quality_by_source: dict[str, dict[str, Any]] = {}
     for source_id in sorted({str(record.get("source_id", "unknown")) for record in live_records}):
-        source_records = [
-            record for record in live_records if record.get("source_id") == source_id
-        ]
+        source_records = [record for record in live_records if record.get("source_id") == source_id]
         opportunity_type_counts: dict[str, int] = {}
         for record in source_records:
             opportunity_type = record.get("opportunity_type", OpportunityType.UNKNOWN)
@@ -556,12 +567,10 @@ def _source_check_all(args: argparse.Namespace) -> int:
             "records_with_call_id": sum(bool(record.get("call_id")) for record in source_records),
             "records_with_topic_id": sum(bool(record.get("topic_id")) for record in source_records),
             "records_with_official_call_or_topic_id": sum(
-                bool(record.get("call_id") or record.get("topic_id"))
-                for record in source_records
+                bool(record.get("call_id") or record.get("topic_id")) for record in source_records
             ),
             "records_with_canonical_topic_url": sum(
-                "/opportunities/topic-details/"
-                in str(record.get("canonical_url") or "").casefold()
+                "/opportunities/topic-details/" in str(record.get("canonical_url") or "").casefold()
                 for record in source_records
             ),
             "records_with_canonical_tender_url": sum(

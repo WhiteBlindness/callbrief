@@ -217,9 +217,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(funding_report["response_boolean_flags"], {"timedOut": False})
         self.assertEqual(funding_report["source_payload_sha256"], ["a" * 64])
         self.assertEqual(funding_report["response_provenance_status"], "LIVE_SOURCE_VERIFIED")
-        funding_quality = report["live_corpus"]["record_quality_by_source"][
-            "eu_funding_tenders"
-        ]
+        funding_quality = report["live_corpus"]["record_quality_by_source"]["eu_funding_tenders"]
         self.assertEqual(funding_quality["records_with_official_call_or_topic_id"], 0)
         self.assertEqual(funding_quality["records_with_canonical_topic_url"], 0)
         self.assertEqual(funding_quality["opportunity_type_counts"], {"unknown": 1})
@@ -232,6 +230,41 @@ class CliTests(unittest.TestCase):
             self.assertIn("parser_result", item)
             self.assertGreaterEqual(item["elapsed_ms"], 0)
         self.assertNotIn("A funded project call", output.getvalue())
+
+    def test_source_check_all_preserves_safe_metadata_for_response_failure(self) -> None:
+        definition = next(
+            item for item in load_source_registry() if item.source_id == "eu_funding_tenders"
+        )
+
+        class Adapter:
+            def fetch_with_report(self, query: str = "", *, limit: int = 20) -> SourceFetchResult:
+                raise SourceError(
+                    "Source API returned invalid JSON",
+                    error_code="invalid_json",
+                    http_status=200,
+                    response_bytes=8,
+                    source_payload_sha256="b" * 64,
+                )
+
+        output = io.StringIO()
+        with (
+            patch("callbrief.cli.load_source_registry", return_value=(definition,)),
+            patch(
+                "callbrief.cli.create_adapter_registry",
+                return_value={"eu_funding_tenders": Adapter()},
+            ),
+            redirect_stdout(output),
+        ):
+            code = main(["source", "check", "--all-active", "--json"])
+
+        report = json.loads(output.getvalue())
+        source = report["sources"][0]
+        self.assertEqual(code, 1)
+        self.assertEqual(source["error_code"], "invalid_json")
+        self.assertEqual(source["http_status"], 200)
+        self.assertEqual(source["response_bytes"], 8)
+        self.assertEqual(source["source_payload_sha256"], ["b" * 64])
+        self.assertEqual(source["response_provenance_status"], "LIVE_SOURCE_VERIFIED")
 
     def test_source_check_all_rejects_normalized_records_without_evidence(self) -> None:
         definition = next(

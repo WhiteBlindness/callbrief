@@ -6,8 +6,9 @@ import unittest
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
-from urllib.parse import parse_qs, urlparse
 from unittest.mock import patch
+from urllib.error import URLError
+from urllib.parse import parse_qs, urlparse
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from callbrief.deduplication import DuplicateKind, find_duplicate
@@ -162,11 +163,7 @@ class SourceAdapterTests(unittest.TestCase):
                         "bool": {
                             "must": [
                                 {"terms": {"type": ["0", "1", "2", "8"]}},
-                                {
-                                    "terms": {
-                                        "status": ["31094501", "31094502", "31094503"]
-                                    }
-                                },
+                                {"terms": {"status": ["31094501", "31094502", "31094503"]}},
                             ]
                         }
                     },
@@ -374,6 +371,47 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertIn('"status":["31094501","31094502","31094503"]', form_body)
         self.assertEqual(report.total_results, 0)
 
+    def test_funding_tenders_transport_failure_keeps_safe_response_metadata(self) -> None:
+        response_body = b"not json"
+
+        class FakeResponse:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self, _maximum: int) -> bytes:
+                return response_body
+
+        adapter = FundingTendersAdapter()
+        with patch("callbrief.sources.urlopen", return_value=FakeResponse()):
+            with self.assertRaises(SourceError) as raised:
+                adapter.fetch_with_report(limit=5)
+
+        error = raised.exception
+        self.assertEqual(error.error_code, "invalid_json")
+        self.assertEqual(error.http_status, 200)
+        self.assertEqual(error.response_bytes, len(response_body))
+        self.assertEqual(error.source_payload_sha256, hashlib.sha256(response_body).hexdigest())
+
+    def test_funding_tenders_network_failure_has_safe_reason_code(self) -> None:
+        adapter = FundingTendersAdapter()
+        with patch(
+            "callbrief.sources.urlopen",
+            side_effect=URLError(ConnectionResetError("remote closed connection")),
+        ):
+            with self.assertRaises(SourceError) as raised:
+                adapter.fetch_with_report(limit=5)
+
+        self.assertEqual(raised.exception.error_code, "network_connection_reset")
+        self.assertIsNone(raised.exception.http_status)
+        self.assertIsNone(raised.exception.response_bytes)
+        self.assertNotIn("remote closed connection", str(raised.exception))
+
     def test_funding_tenders_reports_safe_schema_diagnostics_for_rejected_rows(self) -> None:
         response = {
             "totalResults": 1,
@@ -468,7 +506,9 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertGreaterEqual(len(registry), 20)
 
     def test_adapter_registry_only_constructs_verified_sources(self) -> None:
-        transport = lambda *_: FIXTURE_RESPONSE
+        def transport(*_: object) -> dict[str, object]:
+            return FIXTURE_RESPONSE
+
         adapter_map = create_adapter_registry(transport=transport)
         self.assertEqual(
             set(adapter_map),
@@ -698,6 +738,14 @@ class SourceAdapterTests(unittest.TestCase):
           Standard Action Projects (SAPs) Climate Governance and Information
         </a>
         <p>Deadline date: 22 September 2026</p>
+        <a href="/funding-opportunities/calls-proposals/climate-change-adaptation-0_en">
+          Standard Action Projects (SAPs) Climate Change Adaptation
+        </a>
+        <p>Deadline date: 22 September 2026</p>
+        <a href="/funding-opportunities/calls-proposals/climate-change-mitigation-0_en">
+          Standard Action Projects (SAPs) Climate Change Mitigation
+        </a>
+        <p>Deadline date: 22 September 2026</p>
         <a href="/funding-opportunities/calls-proposals/invalid-date_en">
           Standard Action Projects (SAPs) for a malformed deadline
         </a>
@@ -709,8 +757,8 @@ class SourceAdapterTests(unittest.TestCase):
         </body></html>"""
         raw_response = html.encode("utf-8")
 
-        def detail_page(reference: str, title: str) -> str:
-            topic_slug = reference.casefold()
+        def detail_page(reference: str, title: str, topic_id: str | None = None) -> str:
+            topic_slug = (topic_id or reference).casefold()
             return f"""<!doctype html><html><body>
             <h1>{title}</h1>
             <h2>Details</h2>
@@ -741,6 +789,18 @@ class SourceAdapterTests(unittest.TestCase):
                 "LIFE-2026-SAP-CLIMA-GOV",
                 "Climate Governance and Information",
             ),
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+            "climate-change-adaptation-0_en": detail_page(
+                "LIFE-2026-CLIMA-SAP-CCA",
+                "Standard Action Projects (SAPs) Climate Change Adaptation",
+                "LIFE-2026-SAP-CLIMA-CCA",
+            ),
+            "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/"
+            "climate-change-mitigation-0_en": detail_page(
+                "LIFE-2026-CLIMA-SAP-CCM",
+                "Standard Action Projects (SAPs) Climate Change Mitigation",
+                "LIFE-2026-SAP-CLIMA-CCM",
+            ),
             invalid_date_url: detail_page(
                 "LIFE-2026-SAP-INVALID-DATE",
                 "Standard Action Projects (SAPs) for a malformed deadline",
@@ -764,7 +824,7 @@ class SourceAdapterTests(unittest.TestCase):
         result = adapter.fetch_with_report(limit=10)
 
         self.assertEqual(result.http_status, 200)
-        self.assertEqual(result.rows_received, 4)
+        self.assertEqual(result.rows_received, 6)
         self.assertEqual(result.rejected_rows, 2)
         self.assertEqual(
             result.rejection_reasons,
@@ -775,7 +835,7 @@ class SourceAdapterTests(unittest.TestCase):
             len(raw_response) + sum(len(value.encode("utf-8")) for value in detail_pages.values()),
         )
         self.assertEqual(result.pagination_state, "complete")
-        self.assertEqual(len(result.documents), 2)
+        self.assertEqual(len(result.documents), 4)
         self.assertEqual(result.source_payload_sha256, hashlib.sha256(raw_response).hexdigest())
         self.assertEqual(result.source_timestamp, "Tue, 06 Oct 2026 10:00:00 GMT")
         self.assertEqual(
@@ -808,11 +868,31 @@ class SourceAdapterTests(unittest.TestCase):
             {
                 "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/life-2026-sap-env-gov_en",
                 "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/wrapped_en",
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/climate-change-adaptation-0_en",
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/climate-change-mitigation-0_en",
             },
         )
         normalized = normalize_source_document(result.documents[0])
         self.assertEqual(normalized.call_id, "LIFE-2026-SAP-ENV-GOV")
         self.assertEqual(normalized.topic_id, "LIFE-2026-SAP-ENV-GOV")
+        for source_url, agency_reference, topic_id in (
+            (
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/climate-change-adaptation-0_en",
+                "LIFE-2026-CLIMA-SAP-CCA",
+                "LIFE-2026-SAP-CLIMA-CCA",
+            ),
+            (
+                "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/climate-change-mitigation-0_en",
+                "LIFE-2026-CLIMA-SAP-CCM",
+                "LIFE-2026-SAP-CLIMA-CCM",
+            ),
+        ):
+            document = next(item for item in result.documents if item.source_url == source_url)
+            opportunity = normalize_source_document(document)
+            self.assertEqual(opportunity.call_id, agency_reference)
+            self.assertEqual(opportunity.topic_id, topic_id)
+            self.assertEqual(dict(document.metadata)["canonical_topic_id"], topic_id)
+            self.assertEqual(dict(document.metadata)["identifier_conflict"], "true")
         self.assertEqual(normalized.programme, "LIFE")
         self.assertEqual(normalized.opening_date.date().isoformat(), "2026-04-21")
         self.assertEqual(normalized.deadline.date().isoformat(), "2026-09-22")
@@ -833,8 +913,9 @@ class SourceAdapterTests(unittest.TestCase):
         climate_source_record = json.loads(climate_document.text)
         self.assertEqual(climate_source_record["deadlineSource"], "22 September 2026, 17:00 (CEST)")
 
-        query_result = adapter.fetch_with_report("LIFE 2026", limit=10)
-        self.assertEqual(len(query_result.documents), 2)
+        query_result = adapter.fetch_with_report("climate governance", limit=10)
+        self.assertEqual(len(query_result.documents), 1)
+        self.assertEqual(query_result.documents[0].title, "Climate Governance and Information")
 
     def test_five_cinea_topic_links_reconcile_with_api_shaped_fixtures(self) -> None:
         repository_root = Path(__file__).resolve().parents[1]

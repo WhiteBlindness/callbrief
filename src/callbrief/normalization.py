@@ -647,11 +647,14 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     if not isinstance(record_id, str) or not record_id.strip():
         record_id = hashlib.sha256(document.text.encode("utf-8")).hexdigest()[:24]
 
-    call_id = (
-        _text(record, _FIELD_ALIASES["call_id"])
-        if _has_evidence(document, record, _FIELD_ALIASES["call_id"])
-        else None
-    )
+    if document.source_id == "cinea_life" and _has_evidence(document, record, ("agencyReference",)):
+        call_id = _text(record, ("agencyReference",))
+    else:
+        call_id = (
+            _text(record, _FIELD_ALIASES["call_id"])
+            if _has_evidence(document, record, _FIELD_ALIASES["call_id"])
+            else None
+        )
     programme = (
         _text(record, _FIELD_ALIASES["programme"])
         if _has_evidence(document, record, _FIELD_ALIASES["programme"])

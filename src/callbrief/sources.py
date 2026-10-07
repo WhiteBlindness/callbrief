@@ -8,6 +8,8 @@ import json
 import posixpath
 import re
 import secrets
+import socket
+import ssl
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -15,7 +17,7 @@ from datetime import UTC, date, datetime, timedelta, timezone
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import NotRequired, Protocol, TypedDict, runtime_checkable
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
@@ -39,6 +41,21 @@ PORTUGAL2030_ANNUAL_PLAN_PAGE_URL = "https://portugal2030.pt/plano-anual-de-avis
 
 class SourceError(RuntimeError):
     """Raised when an upstream source cannot provide a valid response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "source_error",
+        http_status: int | None = None,
+        response_bytes: int | None = None,
+        source_payload_sha256: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.http_status = http_status
+        self.response_bytes = response_bytes
+        self.source_payload_sha256 = source_payload_sha256
 
 
 @runtime_checkable
@@ -257,6 +274,38 @@ TextTransport = Callable[[str, float], object]
 BinaryTransport = Callable[[str, float], object]
 
 
+def _network_error_code(error: URLError | TimeoutError | OSError) -> str:
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLError):
+        return "network_tls"
+    if isinstance(reason, socket.gaierror):
+        return "network_dns"
+    if isinstance(reason, TimeoutError):
+        return "network_timeout"
+    if isinstance(reason, ConnectionResetError):
+        return "network_connection_reset"
+    if isinstance(reason, ConnectionRefusedError):
+        return "network_connection_refused"
+    if isinstance(reason, OSError) and reason.errno is not None:
+        return f"network_os_error_{reason.errno}"
+    return "network_request_failed"
+
+
+def _http_error_source_error(error: HTTPError) -> SourceError:
+    try:
+        body = error.read(MAX_RESPONSE_BYTES + 1)
+    except OSError:
+        body = b""
+    payload_hash = hashlib.sha256(body).hexdigest() if len(body) <= MAX_RESPONSE_BYTES else None
+    return SourceError(
+        f"Source API returned HTTP {error.code}",
+        error_code=f"http_{error.code}",
+        http_status=error.code,
+        response_bytes=len(body),
+        source_payload_sha256=payload_hash,
+    )
+
+
 def _post_json(
     endpoint: str,
     params: Mapping[str, str],
@@ -277,15 +326,29 @@ def _post_json(
             status_code = int(getattr(response, "status", 200))
             last_modified = response.headers.get("Last-Modified")
     except HTTPError as exc:
-        raise SourceError(f"Source API returned HTTP {exc.code}") from None
+        raise _http_error_source_error(exc) from None
     except (URLError, TimeoutError, OSError) as exc:
-        raise SourceError(f"Source API request failed: {type(exc).__name__}") from None
+        error_code = _network_error_code(exc)
+        raise SourceError(
+            f"Source API request failed: {error_code}", error_code=error_code
+        ) from None
     if len(body) > MAX_RESPONSE_BYTES:
-        raise SourceError("Source API response exceeds 5 MiB")
+        raise SourceError(
+            "Source API response exceeds 5 MiB",
+            error_code="response_too_large",
+            http_status=status_code,
+            response_bytes=len(body),
+        )
     try:
         value = json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SourceError("Source API returned invalid JSON") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SourceError(
+            "Source API returned invalid JSON",
+            error_code="invalid_json",
+            http_status=status_code,
+            response_bytes=len(body),
+            source_payload_sha256=hashlib.sha256(body).hexdigest(),
+        ) from None
     return HttpJsonResponse(
         value,
         status_code,
@@ -332,15 +395,29 @@ def _post_multipart_form_json(
             status_code = int(getattr(response, "status", 200))
             last_modified = response.headers.get("Last-Modified")
     except HTTPError as exc:
-        raise SourceError(f"Source API returned HTTP {exc.code}") from None
+        raise _http_error_source_error(exc) from None
     except (URLError, TimeoutError, OSError) as exc:
-        raise SourceError(f"Source API request failed: {type(exc).__name__}") from None
+        error_code = _network_error_code(exc)
+        raise SourceError(
+            f"Source API request failed: {error_code}", error_code=error_code
+        ) from None
     if len(response_body) > MAX_RESPONSE_BYTES:
-        raise SourceError("Source API response exceeds 5 MiB")
+        raise SourceError(
+            "Source API response exceeds 5 MiB",
+            error_code="response_too_large",
+            http_status=status_code,
+            response_bytes=len(response_body),
+        )
     try:
         value = json.loads(response_body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SourceError("Source API returned invalid JSON") from exc
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SourceError(
+            "Source API returned invalid JSON",
+            error_code="invalid_json",
+            http_status=status_code,
+            response_bytes=len(response_body),
+            source_payload_sha256=hashlib.sha256(response_body).hexdigest(),
+        ) from None
     return HttpJsonResponse(
         value,
         status_code,
@@ -901,6 +978,25 @@ class _VisibleTextParser(HTMLParser):
             self._heading_parts.append(data)
 
 
+class _CineaDetailRecord(TypedDict):
+    record_id: str
+    agencyReference: str
+    topicCode: str
+    canonicalTopicId: str
+    identifierConflict: bool
+    callIdentifier: str
+    programme: str
+    programmeName: str
+    title: str
+    status: str
+    openingDate: str
+    deadlineDate: str
+    deadlineSource: str
+    authority: str
+    canonicalUrl: str
+    publicationDate: NotRequired[str]
+
+
 class CineaLifeAdapter:
     """Extract LIFE call records and canonical links from CINEA's official pages."""
 
@@ -998,7 +1094,9 @@ class CineaLifeAdapter:
         return None
 
     @classmethod
-    def _parse_detail(cls, html: str, page_url: str, fallback_title: str) -> dict[str, str] | None:
+    def _parse_detail(
+        cls, html: str, page_url: str, fallback_title: str
+    ) -> _CineaDetailRecord | None:
         parser = _VisibleTextParser()
         try:
             parser.feed(html)
@@ -1010,20 +1108,18 @@ class CineaLifeAdapter:
         if reference is None or cls._CALL_ID.fullmatch(reference) is None:
             return None
         canonical_url = None
+        canonical_topic_id = None
         for anchor in parser.anchors:
             link = cls._official_link(page_url, anchor.href)
             if link is None:
                 continue
             parsed_link = urlparse(link)
             topic_match = cls._TOPIC_URL.search(parsed_link.path)
-            if (
-                parsed_link.hostname == "ec.europa.eu"
-                and topic_match is not None
-                and topic_match.group(1).casefold() == reference.casefold()
-            ):
+            if parsed_link.hostname == "ec.europa.eu" and topic_match is not None:
+                canonical_topic_id = topic_match.group(1).upper()
                 canonical_url = re.sub(r"(?:%20)+$", "", link.rstrip(), flags=re.IGNORECASE)
                 break
-        if canonical_url is None:
+        if canonical_url is None or canonical_topic_id is None:
             return None
 
         programme_name = cls._value_after_label(parser.text, "Funding programme")
@@ -1061,9 +1157,12 @@ class CineaLifeAdapter:
                 )
             except ValueError:
                 return None
-        record = {
+        record: _CineaDetailRecord = {
             "record_id": reference,
-            "topicCode": reference,
+            "agencyReference": reference,
+            "topicCode": canonical_topic_id,
+            "canonicalTopicId": canonical_topic_id,
+            "identifierConflict": canonical_topic_id.casefold() != reference.casefold(),
             "callIdentifier": reference,
             "programme": programme,
             "programmeName": programme_name,
@@ -1178,7 +1277,9 @@ class CineaLifeAdapter:
                     text=source_record_text,
                     metadata=(
                         ("record_id", record_id),
-                        ("reference", source_record["callIdentifier"]),
+                        ("reference", source_record["agencyReference"]),
+                        ("canonical_topic_id", source_record["canonicalTopicId"]),
+                        ("identifier_conflict", str(source_record["identifierConflict"]).lower()),
                         *(_source_context_metadata(self.source_id)),
                     ),
                     discovered_links=(source_record["canonicalUrl"], detail_url),
@@ -1435,8 +1536,17 @@ class FundingTendersAdapter:
         ) = _response_details(transport_response)
         field_types, array_lengths, boolean_flags = _response_shape(response)
         retrieved_at = datetime.now(UTC)
-        rows = _result_rows(response)
-        total = _total_results(response)
+        try:
+            rows = _result_rows(response)
+            total = _total_results(response)
+        except SourceError as exc:
+            raise SourceError(
+                str(exc),
+                error_code=exc.error_code,
+                http_status=http_status,
+                response_bytes=response_bytes,
+                source_payload_sha256=payload_hash,
+            ) from exc
         documents: list[SourceDocument] = []
         rejected = 0
         record_field_names: set[str] = set()
@@ -1517,11 +1627,9 @@ class FundingTendersAdapter:
                 )
                 if isinstance((value := record.get(name)), str) and value.strip()
             )
-            if (
-                details_identifier is None
-                or _identifier_token(details_identifier)
-                not in {_identifier_token(value) for value in source_identifiers}
-            ):
+            if details_identifier is None or _identifier_token(details_identifier) not in {
+                _identifier_token(value) for value in source_identifiers
+            }:
                 rejected += 1
                 rejection_reasons["details_identifier_mismatch"] = (
                     rejection_reasons.get("details_identifier_mismatch", 0) + 1
@@ -1654,8 +1762,17 @@ class TedSearchAdapter:
         ) = _response_details(transport_response)
         field_types, array_lengths, boolean_flags = _response_shape(response)
         retrieved_at = datetime.now(UTC)
-        rows = _result_rows(response)
-        total = _total_results(response)
+        try:
+            rows = _result_rows(response)
+            total = _total_results(response)
+        except SourceError as exc:
+            raise SourceError(
+                str(exc),
+                error_code=exc.error_code,
+                http_status=http_status,
+                response_bytes=response_bytes,
+                source_payload_sha256=payload_hash,
+            ) from exc
         documents: list[SourceDocument] = []
         rejected = 0
         rejection_reasons: dict[str, int] = {}
@@ -1967,9 +2084,7 @@ def create_adapter_registry(
     agent_reach_allowed_hosts: Iterable[str] = (),
 ) -> dict[str, SourceAdapter]:
     """Construct registered adapters and optionally attach a host integration."""
-    funding_tenders_transport = (
-        transport if transport is not None else _post_multipart_form_json
-    )
+    funding_tenders_transport = transport if transport is not None else _post_multipart_form_json
     ted_transport = transport if transport is not None else _post_json
     adapters: dict[str, SourceAdapter] = {
         definition.source_id: (

@@ -2,22 +2,33 @@ name: Live source verification
 
 on:
   workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag, or commit SHA to verify
+        required: true
+        default: main
+        type: string
+      limit:
+        description: Maximum records to inspect per source (1 to 100)
+        required: true
+        default: 100
+        type: number
 
 permissions:
   contents: read
 
 jobs:
   check-active-sources:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - name: Check out selected branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -33,16 +44,17 @@ jobs:
         continue-on-error: true
         env:
           LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
+          SOURCE_LIMIT: ${{ inputs.limit }}
         run: >-
-          callbrief source check --all-active --json --limit 100
+          callbrief source check --all-active --json --limit "$SOURCE_LIMIT"
           --summary-path live-source-summary.json
-          --live-corpus-path "$LIVE_CORPUS_PATH"
+          --live-corpus-path "$LIVE_CORPUS_PATH" > /dev/null
 
       - name: Summarize live corpus and enforce acceptance
         if: always()
         env:
           LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
-          TARGET_REF: ${{ github.ref }}
+          TARGET_REF: ${{ inputs.ref }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           python - <<'PY'
@@ -228,8 +240,8 @@ jobs:
               f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
               f"Record quality by source: `{summary['live_corpus'].get('record_quality_by_source', {})}`.",
               "",
-              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Call/topic IDs | Detail URLs | Opportunity types | Source timestamp | Elapsed ms | Gate |",
-              "|---|---:|---:|---:|---:|---|---|---:|---:|---|---|---:|---|",
+              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Error code | Payload SHA / provenance | Call/topic IDs | Detail URLs | Opportunity types | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---:|---|---|---|---|---:|---:|---|---|---:|---|",
           ]
           for item in sources:
               source_id = str(item.get('source_id', 'unknown'))
@@ -247,8 +259,10 @@ jobs:
                   f"{item.get('total_results')} | {item.get('rows_received')} / "
                   f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
                   f"{item.get('pagination_state')} | {item.get('schema_status')} / "
-                  f"{item.get('parser_result')} | {call_topic_ids} | "
-                  f"{topic_urls} topic / {tender_urls} tender | `{opportunity_types}` | "
+                  f"{item.get('parser_result')} | {item.get('error_code') or ''} | "
+                  f"`{item.get('source_payload_sha256') or []}` / "
+                  f"{item.get('response_provenance_status') or ''} | "
+                  f"{call_topic_ids} | {topic_urls} topic / {tender_urls} tender | `{opportunity_types}` | "
                   f"{item.get('source_timestamp')} | "
                   f"{item.get('elapsed_ms')} | {'pass' if item.get('workflow_gate_success') else 'fail'} |"
               )
@@ -263,7 +277,7 @@ jobs:
 
       - name: Upload compact live-check summary
         if: always() && hashFiles('live-source-summary.json') != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: live-source-summary
           path: live-source-summary.json
