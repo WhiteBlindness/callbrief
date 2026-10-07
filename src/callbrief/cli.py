@@ -404,6 +404,9 @@ def _source_check_all(args: argparse.Namespace) -> int:
         source_timestamps: set[str] = set()
         response_schema_fields: set[str] = set()
         record_schema_fields: set[str] = set()
+        response_field_types: set[tuple[str, str]] = set()
+        response_array_lengths: dict[str, int] = {}
+        response_boolean_flags: dict[str, bool] = {}
         rejection_reasons: dict[str, int] = {}
         response_provenance_status: str | None = None
         if adapter is None:
@@ -433,6 +436,9 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 pagination_state = result.pagination_state
                 response_schema_fields.update(result.response_schema_fields)
                 record_schema_fields.update(result.record_schema_fields)
+                response_field_types.update(result.response_field_types)
+                response_array_lengths.update(result.response_array_lengths)
+                response_boolean_flags.update(result.response_boolean_flags)
                 for reason, count in result.rejection_reasons:
                     rejection_reasons[reason] = rejection_reasons.get(reason, 0) + count
                 if result.source_payload_sha256:
@@ -484,6 +490,12 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 "schema_status": schema_status,
                 "response_schema_fields": sorted(response_schema_fields),
                 "record_schema_fields": sorted(record_schema_fields),
+                "response_field_types": [
+                    {"field": name, "type": value_type}
+                    for name, value_type in sorted(response_field_types)
+                ],
+                "response_array_lengths": dict(sorted(response_array_lengths.items())),
+                "response_boolean_flags": dict(sorted(response_boolean_flags.items())),
                 "response_provenance_status": response_provenance_status,
                 "source_timestamp": next(iter(source_timestamps))
                 if len(source_timestamps) == 1

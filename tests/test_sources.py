@@ -207,6 +207,9 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(result.total_results, 1)
         self.assertEqual(result.rejected_rows, 1)
         self.assertEqual(result.response_schema_fields, ("results", "totalResults"))
+        self.assertIn(("results", "list"), result.response_field_types)
+        self.assertIn(("totalResults", "int"), result.response_field_types)
+        self.assertEqual(result.response_array_lengths, (("results", 1),))
         self.assertEqual(
             result.record_schema_fields,
             ("content", "recordIdentifier", "titleText"),
@@ -546,6 +549,10 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(result.rows_received, 4)
         self.assertEqual(result.rejected_rows, 2)
         self.assertEqual(
+            result.rejection_reasons,
+            (("invalid_detail_url", 1), ("unrecognized_detail_page", 1)),
+        )
+        self.assertEqual(
             result.response_bytes,
             len(raw_response) + sum(len(value.encode("utf-8")) for value in detail_pages.values()),
         )
@@ -720,6 +727,9 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(report.http_status, 200)
         self.assertEqual(report.total_results, 15)
         self.assertEqual(report.pagination_state, "more_available")
+        self.assertIn(("results", "list"), report.response_field_types)
+        self.assertIn(("total", "int"), report.response_field_types)
+        self.assertEqual(report.response_array_lengths, (("results", 1),))
         self.assertEqual(len(report.documents), 1)
         item = report.documents[0]
         self.assertEqual(item.source_id, "ted_eu_procurement")
@@ -730,6 +740,22 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(captured[0][1], {})
         self.assertEqual(captured[0][2]["limit"], 10)
         self.assertIn("publication-number", captured[0][2]["fields"])
+
+    def test_ted_reports_empty_response_shape_and_string_count_safely(self) -> None:
+        response = {
+            "iterationNextToken": None,
+            "notices": [],
+            "timedOut": False,
+            "totalNoticeCount": "0",
+        }
+
+        report = TedSearchAdapter(transport=lambda *_: response).fetch_with_report()
+
+        self.assertEqual(report.total_results, 0)
+        self.assertEqual(report.rows_received, 0)
+        self.assertEqual(report.response_array_lengths, (("notices", 0),))
+        self.assertEqual(report.response_boolean_flags, (("timedOut", False),))
+        self.assertIn(("totalNoticeCount", "str"), report.response_field_types)
 
     def test_ted_retains_only_a_bounded_normalized_snapshot_with_live_hash(self) -> None:
         response = {

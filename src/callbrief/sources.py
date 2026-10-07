@@ -92,6 +92,9 @@ class SourceFetchResult:
     rejected_rows: int = 0
     response_schema_fields: tuple[str, ...] = ()
     record_schema_fields: tuple[str, ...] = ()
+    response_field_types: tuple[tuple[str, str], ...] = ()
+    response_array_lengths: tuple[tuple[str, int], ...] = ()
+    response_boolean_flags: tuple[tuple[str, bool], ...] = ()
     rejection_reasons: tuple[tuple[str, int], ...] = ()
     source_payload_sha256: str | None = None
     source_timestamp: str | None = None
@@ -327,6 +330,35 @@ def _safe_field_names(records: Iterable[Mapping[str, object]]) -> tuple[str, ...
     return tuple(sorted(name for name in names if name)[:80])
 
 
+def _response_shape(
+    response: object,
+) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, int], ...], tuple[tuple[str, bool], ...]]:
+    """Summarize JSON response structure without retaining source values."""
+    if isinstance(response, HttpJsonResponse):
+        response = response.body
+    if not isinstance(response, Mapping):
+        return (), (), ()
+    field_types: list[tuple[str, str]] = []
+    array_lengths: list[tuple[str, int]] = []
+    boolean_flags: list[tuple[str, bool]] = []
+    for key, value in response.items():
+        if not isinstance(key, str):
+            continue
+        safe_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", key)[:64]
+        if not safe_key:
+            continue
+        field_types.append((safe_key, type(value).__name__))
+        if isinstance(value, list):
+            array_lengths.append((safe_key, len(value)))
+        if isinstance(value, bool):
+            boolean_flags.append((safe_key, value))
+    return (
+        tuple(sorted(field_types)[:80]),
+        tuple(sorted(array_lengths)[:80]),
+        tuple(sorted(boolean_flags)[:80]),
+    )
+
+
 def _total_results(response: object) -> int | None:
     if isinstance(response, HttpJsonResponse):
         response = response.body
@@ -343,6 +375,8 @@ def _total_results(response: object) -> int | None:
         value = response.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
+        if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 18:
+            return int(value)
     return None
 
 
@@ -989,18 +1023,31 @@ class CineaLifeAdapter:
         selected_query = query.strip().casefold()
         documents: list[SourceDocument] = []
         rejected = 0
+        rejection_reasons: dict[str, int] = {}
         response_bytes_total = response_bytes
         for index, anchor in enumerate(candidates):
             context_end = candidates[index + 1].start if index + 1 < len(candidates) else len(text)
             context = text[anchor.end : context_end]
             match = self._DEADLINE.search(context)
             detail_url = self._official_link(self.endpoint, anchor.href)
-            if match is None or detail_url is None:
+            if match is None:
                 rejected += 1
+                rejection_reasons["missing_listing_deadline"] = (
+                    rejection_reasons.get("missing_listing_deadline", 0) + 1
+                )
+                continue
+            if detail_url is None:
+                rejected += 1
+                rejection_reasons["invalid_detail_url"] = (
+                    rejection_reasons.get("invalid_detail_url", 0) + 1
+                )
                 continue
             due_date = self._parse_deadline(match.group(1))
             if due_date is None:
                 rejected += 1
+                rejection_reasons["unparseable_listing_deadline"] = (
+                    rejection_reasons.get("unparseable_listing_deadline", 0) + 1
+                )
                 continue
             title = anchor.text.strip()
             searchable_text = f"{title} {match.group(1)} LIFE 2026".casefold()
@@ -1021,6 +1068,9 @@ class CineaLifeAdapter:
             source_record = self._parse_detail(detail_html, detail_url, title)
             if source_record is None:
                 rejected += 1
+                rejection_reasons["unrecognized_detail_page"] = (
+                    rejection_reasons.get("unrecognized_detail_page", 0) + 1
+                )
                 continue
             record_id = f"CINEA-{hashlib.sha256(detail_url.encode('utf-8')).hexdigest()[:24]}"
             source_record["record_id"] = record_id
@@ -1059,6 +1109,7 @@ class CineaLifeAdapter:
             pagination,
             len(candidates),
             rejected,
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
             source_payload_sha256=listing_hash,
             source_timestamp=listing_last_modified,
             response_provenance_status=listing_provenance,
@@ -1144,6 +1195,7 @@ class FundingTendersAdapter:
             payload_hash,
             provenance,
         ) = _response_details(transport_response)
+        field_types, array_lengths, boolean_flags = _response_shape(response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -1229,6 +1281,9 @@ class FundingTendersAdapter:
                 _safe_field_names((response,)) if isinstance(response, Mapping) else ()
             ),
             record_schema_fields=tuple(sorted(record_field_names)),
+            response_field_types=field_types,
+            response_array_lengths=array_lengths,
+            response_boolean_flags=boolean_flags,
             rejection_reasons=tuple(sorted(rejection_reasons.items())),
             source_payload_sha256=payload_hash,
             source_timestamp=last_modified,
@@ -1295,6 +1350,7 @@ class TedSearchAdapter:
             payload_hash,
             provenance,
         ) = _response_details(transport_response)
+        field_types, array_lengths, boolean_flags = _response_shape(response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -1360,6 +1416,9 @@ class TedSearchAdapter:
                 _safe_field_names((response,)) if isinstance(response, Mapping) else ()
             ),
             record_schema_fields=_safe_field_names(rows),
+            response_field_types=field_types,
+            response_array_lengths=array_lengths,
+            response_boolean_flags=boolean_flags,
             rejection_reasons=tuple(sorted(rejection_reasons.items())),
             source_payload_sha256=payload_hash,
             source_timestamp=last_modified,

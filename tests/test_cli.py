@@ -158,6 +158,15 @@ class CliTests(unittest.TestCase):
                     record_schema_fields=("id", "title")
                     if self.source_id == "eu_funding_tenders"
                     else (),
+                    response_field_types=(("results", "list"), ("totalResults", "int"))
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
+                    response_array_lengths=(("results", 1),)
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
+                    response_boolean_flags=(("timedOut", False),)
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
                     source_payload_sha256="a" * 64
                     if self.source_id == "eu_funding_tenders"
                     else None,
@@ -189,6 +198,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual(funding_report["total_results"], 1)
         self.assertEqual(funding_report["response_schema_fields"], ["results", "totalResults"])
         self.assertEqual(funding_report["record_schema_fields"], ["id", "title"])
+        self.assertEqual(
+            funding_report["response_field_types"],
+            [
+                {"field": "results", "type": "list"},
+                {"field": "totalResults", "type": "int"},
+            ],
+        )
+        self.assertEqual(funding_report["response_array_lengths"], {"results": 1})
+        self.assertEqual(funding_report["response_boolean_flags"], {"timedOut": False})
         self.assertEqual(funding_report["source_payload_sha256"], ["a" * 64])
         self.assertEqual(funding_report["response_provenance_status"], "LIVE_SOURCE_VERIFIED")
         for item in report["sources"]:
