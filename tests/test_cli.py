@@ -13,6 +13,7 @@ from unittest.mock import patch
 from callbrief.cli import main
 from callbrief.domain import (
     EligibilityRule,
+    EvidenceProvenance,
     Opportunity,
     OpportunityStatus,
     OpportunityType,
@@ -151,6 +152,21 @@ class CliTests(unittest.TestCase):
                     total_results=1,
                     pagination_state="complete",
                     rows_received=1,
+                    response_schema_fields=("results", "totalResults")
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
+                    record_schema_fields=("id", "title")
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
+                    source_payload_sha256="a" * 64
+                    if self.source_id == "eu_funding_tenders"
+                    else None,
+                    source_timestamp="Tue, 06 Oct 2026 10:00:00 GMT"
+                    if self.source_id == "eu_funding_tenders"
+                    else None,
+                    response_provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED
+                    if self.source_id == "eu_funding_tenders"
+                    else EvidenceProvenance.CAPTURED_FIXTURE,
                 )
 
         adapters = {item.source_id: Adapter(item.source_id) for item in definitions}
@@ -167,6 +183,14 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(report["sources"]), 4)
         self.assertTrue(all(item["http_success"] for item in report["sources"]))
         self.assertTrue(all(item["rows_accepted"] == 1 for item in report["sources"]))
+        funding_report = next(
+            item for item in report["sources"] if item["source_id"] == "eu_funding_tenders"
+        )
+        self.assertEqual(funding_report["total_results"], 1)
+        self.assertEqual(funding_report["response_schema_fields"], ["results", "totalResults"])
+        self.assertEqual(funding_report["record_schema_fields"], ["id", "title"])
+        self.assertEqual(funding_report["source_payload_sha256"], ["a" * 64])
+        self.assertEqual(funding_report["response_provenance_status"], "LIVE_SOURCE_VERIFIED")
         for item in report["sources"]:
             self.assertIn("source_id", item)
             self.assertIn("response_bytes", item)

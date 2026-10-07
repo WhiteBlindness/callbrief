@@ -402,6 +402,10 @@ def _source_check_all(args: argparse.Namespace) -> int:
         pagination_state = "not_determined"
         payload_hashes: set[str] = set()
         source_timestamps: set[str] = set()
+        response_schema_fields: set[str] = set()
+        record_schema_fields: set[str] = set()
+        rejection_reasons: dict[str, int] = {}
+        response_provenance_status: str | None = None
         if adapter is None:
             parser_error = "adapter_not_registered"
         else:
@@ -427,6 +431,16 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 rows_received = result.rows_received
                 rows_rejected = result.rejected_rows
                 pagination_state = result.pagination_state
+                response_schema_fields.update(result.response_schema_fields)
+                record_schema_fields.update(result.record_schema_fields)
+                for reason, count in result.rejection_reasons:
+                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + count
+                if result.source_payload_sha256:
+                    payload_hashes.add(result.source_payload_sha256)
+                if result.source_timestamp:
+                    source_timestamps.add(result.source_timestamp)
+                if result.response_provenance_status is not None:
+                    response_provenance_status = result.response_provenance_status.value
                 for document in result.documents:
                     if document.source_payload_sha256:
                         payload_hashes.add(document.source_payload_sha256)
@@ -462,10 +476,15 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 "response_bytes": response_bytes,
                 "rows_received": rows_received,
                 "rows_returned": len(result.documents) if result else 0,
+                "total_results": result.total_results if result else None,
                 "rows_accepted": len(normalized),
                 "rows_rejected": rows_rejected,
+                "rejection_reasons": dict(sorted(rejection_reasons.items())),
                 "pagination_state": pagination_state,
                 "schema_status": schema_status,
+                "response_schema_fields": sorted(response_schema_fields),
+                "record_schema_fields": sorted(record_schema_fields),
+                "response_provenance_status": response_provenance_status,
                 "source_timestamp": next(iter(source_timestamps))
                 if len(source_timestamps) == 1
                 else None,

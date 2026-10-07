@@ -184,6 +184,41 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(evidence.source_payload_sha256, payload_hash)
         self.assertIsNone(evidence.normalized_snapshot)
 
+    def test_funding_tenders_reports_safe_schema_diagnostics_for_rejected_rows(self) -> None:
+        response = {
+            "totalResults": 1,
+            "results": [
+                {"recordIdentifier": "not-an-adapter-id", "content": {"titleText": "Fixture"}}
+            ],
+        }
+        raw_response = json.dumps(response, ensure_ascii=False).encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
+        transport_response = HttpJsonResponse(
+            response,
+            200,
+            len(raw_response),
+            last_modified="Tue, 06 Oct 2026 10:00:00 GMT",
+            source_payload_sha256=payload_hash,
+            provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
+        result = FundingTendersAdapter(transport=lambda *_: transport_response).fetch_with_report()
+
+        self.assertEqual(result.total_results, 1)
+        self.assertEqual(result.rejected_rows, 1)
+        self.assertEqual(result.response_schema_fields, ("results", "totalResults"))
+        self.assertEqual(
+            result.record_schema_fields,
+            ("content", "recordIdentifier", "titleText"),
+        )
+        self.assertEqual(result.rejection_reasons, (("missing_stable_id", 1),))
+        self.assertEqual(result.source_payload_sha256, payload_hash)
+        self.assertEqual(result.source_timestamp, "Tue, 06 Oct 2026 10:00:00 GMT")
+        self.assertEqual(
+            result.response_provenance_status,
+            EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
     def test_adapter_rejects_invalid_query_and_limit_before_transport(self) -> None:
         def unexpected_transport(*_args):
             self.fail("must not make a request")
@@ -516,6 +551,12 @@ class SourceAdapterTests(unittest.TestCase):
         )
         self.assertEqual(result.pagination_state, "complete")
         self.assertEqual(len(result.documents), 2)
+        self.assertEqual(result.source_payload_sha256, hashlib.sha256(raw_response).hexdigest())
+        self.assertEqual(result.source_timestamp, "Tue, 06 Oct 2026 10:00:00 GMT")
+        self.assertEqual(
+            result.response_provenance_status,
+            EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
         self.assertIn("22 September 2026", result.documents[0].text)
         self.assertTrue(dict(result.documents[0].metadata)["record_id"].startswith("CINEA-"))
         self.assertEqual(

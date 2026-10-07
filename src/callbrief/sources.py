@@ -90,6 +90,12 @@ class SourceFetchResult:
     pagination_state: str
     rows_received: int = 0
     rejected_rows: int = 0
+    response_schema_fields: tuple[str, ...] = ()
+    record_schema_fields: tuple[str, ...] = ()
+    rejection_reasons: tuple[tuple[str, int], ...] = ()
+    source_payload_sha256: str | None = None
+    source_timestamp: str | None = None
+    response_provenance_status: EvidenceProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,12 +316,30 @@ def _result_rows(response: object) -> list[Mapping[str, object]]:
     return rows
 
 
+def _safe_field_names(records: Iterable[Mapping[str, object]]) -> tuple[str, ...]:
+    """Return bounded field names only, without retaining or rendering source values."""
+    names = {
+        re.sub(r"[^A-Za-z0-9_.:-]", "_", name)[:64]
+        for record in records
+        for name in record
+        if isinstance(name, str)
+    }
+    return tuple(sorted(name for name in names if name)[:80])
+
+
 def _total_results(response: object) -> int | None:
     if isinstance(response, HttpJsonResponse):
         response = response.body
     if not isinstance(response, dict):
         return None
-    for key in ("totalResults", "total", "totalElements", "numberOfResults"):
+    for key in (
+        "totalResults",
+        "total",
+        "totalElements",
+        "numberOfResults",
+        "totalNoticeCount",
+        "totalSize",
+    ):
         value = response.get(key)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             return value
@@ -943,9 +967,9 @@ class CineaLifeAdapter:
             html,
             http_status,
             response_bytes,
-            _,
-            _,
-            _,
+            listing_last_modified,
+            listing_hash,
+            listing_provenance,
         ) = _html_response_details(response)
         if not 200 <= http_status < 300:
             raise SourceError(f"CINEA listing returned HTTP {http_status}")
@@ -1035,6 +1059,9 @@ class CineaLifeAdapter:
             pagination,
             len(candidates),
             rejected,
+            source_payload_sha256=listing_hash,
+            source_timestamp=listing_last_modified,
+            response_provenance_status=listing_provenance,
         )
 
 
@@ -1122,8 +1149,11 @@ class FundingTendersAdapter:
         total = _total_results(response)
         documents: list[SourceDocument] = []
         rejected = 0
+        record_field_names: set[str] = set()
+        rejection_reasons: dict[str, int] = {}
         for row in rows[:limit]:
             record = _flatten_record(row)
+            record_field_names.update(_safe_field_names((record,)))
             title = next(
                 (
                     str(record[key]).strip()
@@ -1132,11 +1162,25 @@ class FundingTendersAdapter:
                 ),
                 "EU funding opportunity",
             )[:300]
-            stable_id = record.get("id") or record.get("topicCode") or record.get("callIdentifier")
-            if not isinstance(stable_id, (str, int)) or not str(stable_id).strip():
+            stable_id = _first_text(
+                record,
+                (
+                    "id",
+                    "topicCode",
+                    "callIdentifier",
+                    "identifier",
+                    "topicId",
+                    "callId",
+                    "reference",
+                ),
+            )
+            if stable_id is None:
                 rejected += 1
+                rejection_reasons["missing_stable_id"] = (
+                    rejection_reasons.get("missing_stable_id", 0) + 1
+                )
                 continue
-            record_id = str(stable_id)[:200]
+            record_id = stable_id[:200]
             url_keys = ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
             links = tuple(
                 dict.fromkeys(
@@ -1181,6 +1225,14 @@ class FundingTendersAdapter:
             pagination,
             min(len(rows), limit),
             rejected,
+            response_schema_fields=(
+                _safe_field_names((response,)) if isinstance(response, Mapping) else ()
+            ),
+            record_schema_fields=tuple(sorted(record_field_names)),
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
+            source_payload_sha256=payload_hash,
+            source_timestamp=last_modified,
+            response_provenance_status=provenance,
         )
 
 
@@ -1248,10 +1300,14 @@ class TedSearchAdapter:
         total = _total_results(response)
         documents: list[SourceDocument] = []
         rejected = 0
+        rejection_reasons: dict[str, int] = {}
         for row in rows[:limit]:
             record_id = _first_text(row, ("publication-number", "notice-identifier", "ND", "id"))
             if record_id is None:
                 rejected += 1
+                rejection_reasons["missing_publication_number"] = (
+                    rejection_reasons.get("missing_publication_number", 0) + 1
+                )
                 continue
             title = _first_text(row, ("notice-title", "title", "TI"))
             canonical = f"https://ted.europa.eu/en/notice/-/detail/{record_id}"
@@ -1300,6 +1356,14 @@ class TedSearchAdapter:
             pagination,
             min(len(rows), limit),
             rejected,
+            response_schema_fields=(
+                _safe_field_names((response,)) if isinstance(response, Mapping) else ()
+            ),
+            record_schema_fields=_safe_field_names(rows),
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
+            source_payload_sha256=payload_hash,
+            source_timestamp=last_modified,
+            response_provenance_status=provenance,
         )
 
 
@@ -1418,6 +1482,9 @@ class Portugal2030AnnualPlanAdapter:
             pagination,
             received_rows,
             rejected_rows,
+            source_payload_sha256=response.source_payload_sha256,
+            source_timestamp=response.last_modified,
+            response_provenance_status=response.provenance_status,
         )
 
 
