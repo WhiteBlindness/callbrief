@@ -57,6 +57,9 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "name",
         "subject",
         "notice-title",
+        "notice-title.*",
+        "title.*",
+        "TI.*",
         "designação",
         "designacao",
         "designação do aviso",
@@ -157,6 +160,20 @@ def _record(document: SourceDocument) -> dict[str, Any]:
 def _lookup(record: dict[str, Any], aliases: tuple[str, ...]) -> tuple[str, Any] | None:
     keyed = {_key(name): (name, value) for name, value in record.items()}
     for alias in aliases:
+        if alias.endswith(".*"):
+            prefix = alias[:-1].casefold()
+            matching = next(
+                (
+                    (name, value)
+                    for name, value in sorted(record.items())
+                    if name.casefold().startswith(prefix)
+                    and isinstance(value, str)
+                    and value.strip()
+                ),
+                None,
+            )
+            if matching is not None:
+                return matching
         found = keyed.get(_key(alias))
         if found is not None:
             return found

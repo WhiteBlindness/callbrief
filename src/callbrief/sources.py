@@ -1165,6 +1165,30 @@ def _first_text(record: Mapping[str, object], names: tuple[str, ...]) -> str | N
     return None
 
 
+def _ted_title(record: Mapping[str, object]) -> tuple[str, str] | None:
+    """Return a supported TED title and its exact source field path."""
+    for name in ("notice-title", "title", "TI"):
+        value = record.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), name
+        if not isinstance(value, Mapping):
+            continue
+        localized = sorted(
+            (language, text.strip())
+            for language, text in value.items()
+            if isinstance(language, str) and isinstance(text, str) and text.strip()
+        )
+        if not localized:
+            continue
+        by_language = dict(localized)
+        for language in ("eng", "por"):
+            if language in by_language:
+                return by_language[language], f"{name}.{language}"
+        language, text = localized[0]
+        return text, f"{name}.{language}"
+    return None
+
+
 def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
     direct_fields = {
         "id",
@@ -1505,7 +1529,14 @@ class TedSearchAdapter:
                     rejection_reasons.get("missing_publication_number", 0) + 1
                 )
                 continue
-            title = _first_text(row, ("notice-title", "title", "TI"))
+            selected_title = _ted_title(row)
+            if selected_title is None:
+                rejected += 1
+                rejection_reasons["missing_supported_title"] = (
+                    rejection_reasons.get("missing_supported_title", 0) + 1
+                )
+                continue
+            title, title_field = selected_title
             canonical = f"https://ted.europa.eu/en/notice/-/detail/{record_id}"
             links = tuple(
                 dict.fromkeys(
@@ -1515,6 +1546,10 @@ class TedSearchAdapter:
                 )
             ) or (canonical,)
             record = dict(row)
+            for field in ("notice-title", "title", "TI"):
+                if isinstance(record.get(field), Mapping):
+                    record.pop(field)
+            record[title_field] = title
             snapshot_candidate = json.dumps(
                 record,
                 ensure_ascii=False,
@@ -1534,7 +1569,7 @@ class TedSearchAdapter:
                     source_url=links[0],
                     retrieved_at=retrieved_at,
                     content_type="application/json",
-                    title=(title or "TED procurement notice")[:300],
+                    title=title[:300],
                     text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
                     metadata=(
                         ("record_id", record_id),

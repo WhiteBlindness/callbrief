@@ -835,6 +835,67 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(captured[0][2]["limit"], 10)
         self.assertIn("publication-number", captured[0][2]["fields"])
 
+    def test_ted_maps_localized_titles_to_exact_language_evidence(self) -> None:
+        response = {
+            "totalNoticeCount": 2,
+            "notices": [
+                {
+                    "publication-number": "123456-2026",
+                    "notice-title": {
+                        "eng": "Digital services framework",
+                        "por": "Contrato-quadro de serviços digitais",
+                    },
+                    "publication-date": "20261006",
+                },
+                {
+                    "publication-number": "123457-2026",
+                    "notice-title": {"por": "Aquisição de serviços digitais"},
+                    "publication-date": "20261006",
+                },
+            ],
+        }
+        raw_response = json.dumps(response, ensure_ascii=False).encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
+        transport_response = HttpJsonResponse(
+            response,
+            200,
+            len(raw_response),
+            source_payload_sha256=payload_hash,
+            provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
+        documents = TedSearchAdapter(transport=lambda *_: transport_response).fetch(limit=2)
+
+        self.assertEqual(
+            [document.title for document in documents],
+            ["Digital services framework", "Aquisição de serviços digitais"],
+        )
+        self.assertNotIn("Contrato-quadro", documents[0].text)
+        opportunities = [normalize_source_document(document) for document in documents]
+        for opportunity, expected_section in zip(
+            opportunities, ("notice-title.eng", "notice-title.por"), strict=True
+        ):
+            title_evidence = next(
+                item for item in opportunity.evidence if item.section.startswith("notice-title")
+            )
+            self.assertEqual(title_evidence.section, expected_section)
+            self.assertEqual(
+                title_evidence.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED
+            )
+            self.assertEqual(title_evidence.source_payload_sha256, payload_hash)
+
+    def test_ted_rejects_records_without_a_supported_title(self) -> None:
+        response = {
+            "totalNoticeCount": 1,
+            "notices": [{"publication-number": "123456-2026"}],
+        }
+
+        report = TedSearchAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(report.documents, ())
+        self.assertEqual(report.rejected_rows, 1)
+        self.assertEqual(report.rejection_reasons, (("missing_supported_title", 1),))
+
     def test_ted_snapshot_stays_bounded_for_large_multilot_notices(self) -> None:
         response = {
             "totalNoticeCount": 1,
