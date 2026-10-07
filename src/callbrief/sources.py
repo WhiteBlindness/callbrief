@@ -1166,17 +1166,84 @@ def _first_text(record: Mapping[str, object], names: tuple[str, ...]) -> str | N
 
 
 def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
-    content = row.get("content")
-    if isinstance(content, dict):
-        return {**row, **content}
-    if isinstance(content, str):
+    direct_fields = {
+        "id",
+        "topicCode",
+        "callIdentifier",
+        "identifier",
+        "topicId",
+        "callId",
+        "reference",
+        "url",
+        "webUrl",
+        "topicUrl",
+        "link",
+        "urlEN",
+        "permalink",
+        "title",
+        "title_en",
+        "titleEN",
+        "name",
+        "subject",
+        "status",
+        "topicStatus",
+        "callStatus",
+        "programme",
+        "programmeName",
+        "frameworkProgramme",
+        "programName",
+        "openingDate",
+        "startDate",
+        "deadline",
+        "deadlineDate",
+        "submissionDeadline",
+        "publicationDate",
+        "publishedAt",
+        "sourceUpdatedAt",
+        "updatedAt",
+        "budgetTotal",
+        "totalBudget",
+        "callBudget",
+        "documents",
+        "documentsToProvide",
+        "type",
+        "typeName",
+        "opportunityType",
+        "fundingType",
+    }
+    record = {key: value for key, value in row.items() if key in direct_fields}
+
+    content_record: object = row.get("content")
+    if isinstance(content_record, str):
         try:
-            decoded = json.loads(content)
+            content_record = json.loads(content_record)
         except json.JSONDecodeError:
-            return dict(row)
-        if isinstance(decoded, dict):
-            return {**row, **decoded}
-    return dict(row)
+            content_record = None
+    if isinstance(content_record, Mapping):
+        record.update(
+            (key, value)
+            for key, value in content_record.items()
+            if isinstance(key, str) and key in direct_fields and key not in record
+        )
+
+    metadata = row.get("metadata")
+    metadata_fields = (
+        "title",
+        "status",
+        "startDate",
+        "esDA_endDate",
+        "esST_programmes",
+        "esIN_detailsUrl",
+        "REFERENCE",
+    )
+    if isinstance(metadata, Mapping):
+        for key in metadata_fields:
+            value = metadata.get(key)
+            if isinstance(value, list) and len(value) == 1:
+                value = value[0]
+            if value is not None:
+                record[f"metadata.{key}"] = value
+    return record
 
 
 class FundingTendersAdapter:
@@ -1240,17 +1307,33 @@ class FundingTendersAdapter:
         record_field_types: set[tuple[str, str]] = set()
         rejection_reasons: dict[str, int] = {}
         for row in rows[:limit]:
+            diagnostic_views: list[Mapping[str, object]] = [row]
+            content_view: object = row.get("content")
+            if isinstance(content_view, str):
+                try:
+                    content_view = json.loads(content_view)
+                except json.JSONDecodeError:
+                    content_view = None
+            if isinstance(content_view, Mapping):
+                diagnostic_views.append(content_view)
+            record_field_names.update(_safe_field_names(diagnostic_views))
+            record_field_types.update(_safe_record_field_types(diagnostic_views))
             record = _flatten_record(row)
-            record_field_names.update(_safe_field_names((record,)))
-            record_field_types.update(_safe_record_field_types((record,)))
-            title = next(
+            title_value = next(
                 (
                     str(record[key]).strip()
-                    for key in ("title", "title_en", "titleEN", "name", "subject")
+                    for key in (
+                        "title",
+                        "metadata.title",
+                        "title_en",
+                        "titleEN",
+                        "name",
+                        "subject",
+                    )
                     if isinstance(record.get(key), str) and str(record[key]).strip()
                 ),
-                "EU funding opportunity",
-            )[:300]
+                None,
+            )
             stable_id = _first_text(
                 record,
                 (
@@ -1261,6 +1344,7 @@ class FundingTendersAdapter:
                     "topicId",
                     "callId",
                     "reference",
+                    "metadata.REFERENCE",
                 ),
             )
             if stable_id is None:
@@ -1269,8 +1353,23 @@ class FundingTendersAdapter:
                     rejection_reasons.get("missing_stable_id", 0) + 1
                 )
                 continue
+            if title_value is None:
+                rejected += 1
+                rejection_reasons["missing_supported_title"] = (
+                    rejection_reasons.get("missing_supported_title", 0) + 1
+                )
+                continue
+            title = title_value[:300]
             record_id = stable_id[:200]
-            url_keys = ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
+            url_keys = (
+                "metadata.esIN_detailsUrl",
+                "url",
+                "webUrl",
+                "topicUrl",
+                "link",
+                "urlEN",
+                "permalink",
+            )
             links = tuple(
                 dict.fromkeys(
                     value

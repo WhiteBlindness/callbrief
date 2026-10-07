@@ -195,6 +195,8 @@ class CliTests(unittest.TestCase):
         self.assertEqual(len(report["sources"]), 4)
         self.assertTrue(all(item["http_success"] for item in report["sources"]))
         self.assertTrue(all(item["rows_accepted"] == 1 for item in report["sources"]))
+        self.assertTrue(all(item["records_with_evidence"] == 1 for item in report["sources"]))
+        self.assertTrue(all(item["records_without_evidence"] == 0 for item in report["sources"]))
         funding_report = next(
             item for item in report["sources"] if item["source_id"] == "eu_funding_tenders"
         )
@@ -224,6 +226,51 @@ class CliTests(unittest.TestCase):
             self.assertIn("parser_result", item)
             self.assertGreaterEqual(item["elapsed_ms"], 0)
         self.assertNotIn("A funded project call", output.getvalue())
+
+    def test_source_check_all_rejects_normalized_records_without_evidence(self) -> None:
+        definition = next(
+            item for item in load_source_registry() if item.source_id == "eu_funding_tenders"
+        )
+
+        class Adapter:
+            def fetch_with_report(self, query: str = "", *, limit: int = 20):
+                document = SourceDocument(
+                    source_id="eu_funding_tenders",
+                    source_url="https://example.org/call",
+                    retrieved_at=datetime(2026, 10, 7, tzinfo=UTC),
+                    content_type="application/json",
+                    title="Unsupported fallback title",
+                    text=json.dumps({"id": "call-1"}),
+                )
+                return SourceFetchResult(
+                    source_id="eu_funding_tenders",
+                    documents=(document,),
+                    http_status=200,
+                    response_bytes=20,
+                    total_results=1,
+                    pagination_state="complete",
+                    rows_received=1,
+                )
+
+        output = io.StringIO()
+        with (
+            patch("callbrief.cli.load_source_registry", return_value=(definition,)),
+            patch(
+                "callbrief.cli.create_adapter_registry",
+                return_value={"eu_funding_tenders": Adapter()},
+            ),
+            redirect_stdout(output),
+        ):
+            code = main(["source", "check", "--all-active", "--json"])
+
+        report = json.loads(output.getvalue())
+        source = report["sources"][0]
+        self.assertEqual(code, 1)
+        self.assertEqual(source["rows_accepted"], 0)
+        self.assertEqual(source["rows_rejected"], 1)
+        self.assertEqual(source["rejection_reasons"], {"missing_evidence": 1})
+        self.assertEqual(source["records_with_evidence"], 0)
+        self.assertEqual(source["records_without_evidence"], 1)
 
     def test_source_list_displays_active_and_pending_sources(self) -> None:
         output = io.StringIO()

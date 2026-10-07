@@ -185,6 +185,95 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(evidence.source_payload_sha256, payload_hash)
         self.assertIsNone(evidence.normalized_snapshot)
 
+    def test_funding_tenders_maps_minimal_nested_metadata_to_live_evidence(self) -> None:
+        topic_url = (
+            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/"
+            "opportunities/topic-details/DIGITAL-2026-01"
+        )
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "reference": "DIGITAL-2026-01",
+                    "url": "https://api.tech.ec.europa.eu/public-record",
+                    "content": "protected detail text is not retained",
+                    "summary": "protected summary is not retained",
+                    "metadata": {
+                        "title": ["Digital transition for small enterprises"],
+                        "status": ["31094502"],
+                        "startDate": ["2026-08-01"],
+                        "esDA_endDate": ["2026-12-31"],
+                        "esST_programmes": ["Digital Europe Programme"],
+                        "esIN_detailsUrl": [topic_url],
+                        "description": ["protected description is not retained"],
+                    },
+                }
+            ],
+        }
+        raw_response = json.dumps(response, ensure_ascii=False).encode("utf-8")
+        payload_hash = hashlib.sha256(raw_response).hexdigest()
+        transport_response = HttpJsonResponse(
+            response,
+            200,
+            len(raw_response),
+            source_payload_sha256=payload_hash,
+            provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+        )
+
+        result = FundingTendersAdapter(
+            transport=lambda *_: transport_response
+        ).fetch_with_report(limit=1)
+
+        self.assertEqual(result.rows_received, 1)
+        self.assertEqual(result.rejected_rows, 0)
+        self.assertIn(("metadata.title", "list"), result.record_field_types)
+        document = result.documents[0]
+        self.assertEqual(document.title, "Digital transition for small enterprises")
+        self.assertNotIn("protected detail text", document.text)
+        self.assertNotIn("protected summary", document.text)
+        self.assertNotIn("protected description", document.text)
+
+        opportunity = normalize_source_document(document)
+        self.assertEqual(opportunity.title, "Digital transition for small enterprises")
+        self.assertEqual(opportunity.programme, "Digital Europe Programme")
+        self.assertEqual(opportunity.status.value, "open")
+        self.assertEqual(opportunity.opening_date, datetime(2026, 8, 1, tzinfo=UTC))
+        self.assertEqual(opportunity.deadline, datetime(2026, 12, 31, tzinfo=UTC))
+        self.assertEqual(opportunity.canonical_url, topic_url)
+        evidence_by_section = {item.section: item for item in opportunity.evidence}
+        for section in (
+            "metadata.title",
+            "metadata.status",
+            "metadata.startDate",
+            "metadata.esDA_endDate",
+            "metadata.esST_programmes",
+            "metadata.esIN_detailsUrl",
+        ):
+            self.assertIn(section, evidence_by_section)
+            self.assertEqual(
+                evidence_by_section[section].provenance_status,
+                EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+            )
+            self.assertEqual(evidence_by_section[section].source_payload_sha256, payload_hash)
+
+    def test_funding_tenders_rejects_records_without_a_supported_title(self) -> None:
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "reference": "DIGITAL-2026-02",
+                    "metadata": {"status": ["31094501"]},
+                }
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(result.rows_received, 1)
+        self.assertEqual(result.rejected_rows, 1)
+        self.assertEqual(result.documents, ())
+        self.assertEqual(result.rejection_reasons, (("missing_supported_title", 1),))
+
     def test_funding_tenders_reports_safe_schema_diagnostics_for_rejected_rows(self) -> None:
         response = {
             "totalResults": 1,

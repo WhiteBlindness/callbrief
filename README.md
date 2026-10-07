@@ -94,7 +94,7 @@ callbrief discover --source eu_funding_tenders --query "SME research" --database
 callbrief opportunity list --database callbrief.sqlite3
 ```
 
-`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. O workflow manual `Live source verification` verifica os quatro adaptadores num agente alojado pelo GitHub. A recolha passa quando pelo menos três fontes concluem as verificações de rede, esquema, análise dos registos e paginação; o resumo identifica à parte as fontes que falham. O workflow guarda apenas um resumo compacto como artefacto e deixa o corpus normalizado no diretório temporário do agente. A recolha ao vivo serve para verificar os adaptadores e não altera a amostra de avaliação identificada.
+`source check` mostra o estado HTTP, os bytes recebidos, os registos aceites e rejeitados, a validação do esquema, o intervalo de datas, a última atualização e a paginação. O workflow manual `Live source verification` verifica os quatro adaptadores num agente alojado pelo GitHub. A recolha passa quando pelo menos três fontes concluem as verificações de rede, esquema, análise dos registos, paginação e evidência de origem; o resumo identifica à parte as fontes que falham. O workflow guarda apenas um resumo compacto como artefacto e deixa o corpus normalizado no diretório temporário do agente. A recolha ao vivo serve para verificar os adaptadores e não altera a amostra de avaliação identificada.
 
 ```powershell
 callbrief source check --all-active --json

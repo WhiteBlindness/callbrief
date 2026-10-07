@@ -399,6 +399,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
         response_bytes: int | None = None
         rows_received = 0
         rows_rejected = 0
+        records_without_evidence = 0
         pagination_state = "not_determined"
         payload_hashes: set[str] = set()
         source_timestamps: set[str] = set()
@@ -458,6 +459,16 @@ def _source_check_all(args: argparse.Namespace) -> int:
                         opportunity = normalize_source_document(document)
                     except (TypeError, ValueError):
                         rows_rejected += 1
+                        rejection_reasons["normalization_failed"] = (
+                            rejection_reasons.get("normalization_failed", 0) + 1
+                        )
+                        continue
+                    if opportunity.title is None or not opportunity.evidence:
+                        rows_rejected += 1
+                        records_without_evidence += 1
+                        rejection_reasons["missing_evidence"] = (
+                            rejection_reasons.get("missing_evidence", 0) + 1
+                        )
                         continue
                     normalized.append(opportunity)
                     if opportunity.source_updated_at is not None:
@@ -487,6 +498,8 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 "total_results": result.total_results if result else None,
                 "rows_accepted": len(normalized),
                 "rows_rejected": rows_rejected,
+                "records_with_evidence": len(normalized),
+                "records_without_evidence": records_without_evidence,
                 "rejection_reasons": dict(sorted(rejection_reasons.items())),
                 "pagination_state": pagination_state,
                 "schema_status": schema_status,

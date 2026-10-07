@@ -25,6 +25,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "record_id": (
         "record_id",
         "id",
+        "metadata.REFERENCE",
         "topicCode",
         "callIdentifier",
         "identifier",
@@ -43,12 +44,14 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "programmeName",
         "frameworkProgramme",
         "programName",
+        "metadata.esST_programmes",
         "programa",
         "programa operacional",
         "programa financiador",
     ),
     "title": (
         "title",
+        "metadata.title",
         "title_en",
         "titleEN",
         "name",
@@ -294,6 +297,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
             "data inicio prevista",
             "data de início prevista",
             "data de inicio prevista",
+            "metadata.startDate",
         )
         if _has_evidence(document, record, opening_aliases):
             opening_date = _date(record, opening_aliases)
@@ -301,7 +305,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
                 return OpportunityStatus.UPCOMING
         return OpportunityStatus.UNKNOWN
 
-    status_aliases = ("status", "topicStatus", "callStatus")
+    status_aliases = ("status", "topicStatus", "callStatus", "metadata.status")
     value = (
         _text(record, status_aliases) if _has_evidence(document, record, status_aliases) else None
     )
@@ -314,6 +318,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
             "DD",
             "data fim prevista",
             "data de fim prevista",
+            "metadata.esDA_endDate",
         )
         if document.source_id in {"ted_eu_procurement", "cinea_life"} and _has_evidence(
             document, record, deadline_aliases
@@ -606,7 +611,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     evidence = []
     evidence_keys = (
         *_FIELD_ALIASES.values(),
-        ("status", "topicStatus", "callStatus"),
+        ("status", "topicStatus", "callStatus", "metadata.status"),
         ("opportunityType", "typeName", "fundingType", "type"),
         ("publicationDate", "publishedAt", "publication-date", "PD"),
         (
@@ -616,6 +621,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             "data inicio prevista",
             "data de início prevista",
             "data de inicio prevista",
+            "metadata.startDate",
         ),
         (
             "deadline",
@@ -623,6 +629,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             "submissionDeadline",
             "data fim prevista",
             "data de fim prevista",
+            "metadata.esDA_endDate",
         ),
         ("additionalDeadlines", "submissionDeadlines"),
         ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
@@ -631,7 +638,16 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         ("eligibilityRules", "hardEligibilityRules"),
         *_LIST_FIELDS.values(),
         *_DECIMAL_FIELDS.values(),
-        ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink", "notice-url"),
+        (
+            "metadata.esIN_detailsUrl",
+            "url",
+            "webUrl",
+            "topicUrl",
+            "link",
+            "urlEN",
+            "permalink",
+            "notice-url",
+        ),
     )
     for aliases in evidence_keys:
         found = _lookup(record, aliases)
@@ -682,7 +698,16 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         or not _has_evidence(
             document,
             record,
-            ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink", "notice-url"),
+            (
+                "metadata.esIN_detailsUrl",
+                "url",
+                "webUrl",
+                "topicUrl",
+                "link",
+                "urlEN",
+                "permalink",
+                "notice-url",
+            ),
         )
     ):
         canonical_url = None
@@ -768,6 +793,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "data inicio prevista",
                     "data de início prevista",
                     "data de inicio prevista",
+                    "metadata.startDate",
                 ),
             )
             if _has_evidence(
@@ -780,6 +806,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "data inicio prevista",
                     "data de início prevista",
                     "data de inicio prevista",
+                    "metadata.startDate",
                 ),
             )
             else None
@@ -795,6 +822,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "DD",
                     "data fim prevista",
                     "data de fim prevista",
+                    "metadata.esDA_endDate",
                 ),
             )
             if _has_evidence(
@@ -808,6 +836,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "DD",
                     "data fim prevista",
                     "data de fim prevista",
+                    "metadata.esDA_endDate",
                 ),
             )
             else None
