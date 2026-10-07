@@ -1495,7 +1495,9 @@ class TedSearchAdapter:
         documents: list[SourceDocument] = []
         rejected = 0
         rejection_reasons: dict[str, int] = {}
+        record_field_types: set[tuple[str, str]] = set()
         for row in rows[:limit]:
+            record_field_types.update(_safe_record_field_types((row,)))
             record_id = _first_text(row, ("publication-number", "notice-identifier", "ND", "id"))
             if record_id is None:
                 rejected += 1
@@ -1561,6 +1563,7 @@ class TedSearchAdapter:
                 _safe_field_names((response,)) if isinstance(response, Mapping) else ()
             ),
             record_schema_fields=_safe_field_names(rows),
+            record_field_types=tuple(sorted(record_field_types)[:120]),
             response_field_types=field_types,
             response_array_lengths=array_lengths,
             response_boolean_flags=boolean_flags,

@@ -220,9 +220,9 @@ class SourceAdapterTests(unittest.TestCase):
             provenance_status=EvidenceProvenance.LIVE_SOURCE_VERIFIED,
         )
 
-        result = FundingTendersAdapter(
-            transport=lambda *_: transport_response
-        ).fetch_with_report(limit=1)
+        result = FundingTendersAdapter(transport=lambda *_: transport_response).fetch_with_report(
+            limit=1
+        )
 
         self.assertEqual(result.rows_received, 1)
         self.assertEqual(result.rejected_rows, 0)
@@ -819,6 +819,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(report.pagination_state, "more_available")
         self.assertIn(("results", "list"), report.response_field_types)
         self.assertIn(("total", "int"), report.response_field_types)
+        self.assertIn(("notice-title", "str"), report.record_field_types)
         self.assertEqual(report.response_array_lengths, (("results", 1),))
         self.assertEqual(len(report.documents), 1)
         item = report.documents[0]
