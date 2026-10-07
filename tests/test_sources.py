@@ -6,6 +6,7 @@ import unittest
 from datetime import UTC, datetime
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from callbrief.deduplication import DuplicateKind, find_duplicate
@@ -37,14 +38,21 @@ FIXTURE_RESPONSE: dict[str, object] = {
                 "topicCode": "HORIZON-CL4-2025-01",
                 "url": (
                     "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/"
-                    "opportunities/topic-details/example"
+                    "opportunities/topic-details/HORIZON-CL4-2025-01"
                 ),
                 "status": "Open",
             },
         },
         {
             "id": "DIGITAL-2025-02",
-            "content": '{"title":"Digital Europe call","topicCode":"DIGITAL-2025-02"}',
+            "content": {
+                "title": "Digital Europe call",
+                "topicCode": "DIGITAL-2025-02",
+                "url": (
+                    "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/"
+                    "opportunities/topic-details/DIGITAL-2025-02"
+                ),
+            },
         },
     ],
 }
@@ -151,7 +159,14 @@ class SourceAdapterTests(unittest.TestCase):
                     },
                     {
                         "bool": {
-                            "must": [{"terms": {"status": ["31094501", "31094502", "31094503"]}}]
+                            "must": [
+                                {"terms": {"type": ["0", "1", "2", "8"]}},
+                                {
+                                    "terms": {
+                                        "status": ["31094501", "31094502", "31094503"]
+                                    }
+                                },
+                            ]
                         }
                     },
                     20,
@@ -177,6 +192,7 @@ class SourceAdapterTests(unittest.TestCase):
 
         document = FundingTendersAdapter(transport=lambda *_: transport_response).fetch()[0]
         opportunity = normalize_source_document(document)
+        self.assertEqual(opportunity.opportunity_type.value, "grant")
         evidence = next(item for item in opportunity.evidence if item.section == "title")
 
         self.assertEqual(document.provenance_status, EvidenceProvenance.LIVE_SOURCE_VERIFIED)
@@ -240,6 +256,9 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(opportunity.opening_date, datetime(2026, 8, 1, tzinfo=UTC))
         self.assertEqual(opportunity.deadline, datetime(2026, 12, 31, tzinfo=UTC))
         self.assertEqual(opportunity.canonical_url, topic_url)
+        self.assertEqual(opportunity.topic_id, "DIGITAL-2026-01")
+        self.assertEqual(opportunity.call_id, "DIGITAL-2026-01")
+        self.assertEqual(opportunity.opportunity_type.value, "grant")
         evidence_by_section = {item.section: item for item in opportunity.evidence}
         for section in (
             "metadata.title",
@@ -255,6 +274,32 @@ class SourceAdapterTests(unittest.TestCase):
                 EvidenceProvenance.LIVE_SOURCE_VERIFIED,
             )
             self.assertEqual(evidence_by_section[section].source_payload_sha256, payload_hash)
+
+    def test_funding_tenders_maps_tender_type_from_canonical_detail_path(self) -> None:
+        tender_id = "EC-JRC-2026-MVP-5020"
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "reference": tender_id,
+                    "type": "0",
+                    "content": {
+                        "title": "Research services tender",
+                        "url": (
+                            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                            f"screen/opportunities/tender-details/{tender_id}"
+                        ),
+                    },
+                }
+            ],
+        }
+
+        report = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(report.rejected_rows, 0)
+        opportunity = normalize_source_document(report.documents[0])
+        self.assertEqual(opportunity.call_id, tender_id)
+        self.assertEqual(opportunity.opportunity_type.value, "tender")
 
     def test_funding_tenders_rejects_records_without_a_supported_title(self) -> None:
         response = {
@@ -273,6 +318,56 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(result.rejected_rows, 1)
         self.assertEqual(result.documents, ())
         self.assertEqual(result.rejection_reasons, (("missing_supported_title", 1),))
+
+    def test_funding_tenders_rejects_index_records_without_a_canonical_call_url(self) -> None:
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "reference": "INDEX-ROW-1",
+                    "content": {"title": "Indexed information without a call page"},
+                    "url": "https://api.tech.ec.europa.eu/search-api/public-record/1",
+                }
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(result.documents, ())
+        self.assertEqual(result.rejected_rows, 1)
+        self.assertEqual(result.rejection_reasons, (("missing_canonical_details_url", 1),))
+
+    def test_funding_tenders_default_transport_uses_multipart_query_form(self) -> None:
+        response_body = b'{"totalResults":0,"results":[]}'
+
+        class FakeResponse:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self, _maximum: int) -> bytes:
+                return response_body
+
+        adapter = FundingTendersAdapter()
+        with patch("callbrief.sources.urlopen", return_value=FakeResponse()) as urlopen_mock:
+            report = adapter.fetch_with_report(limit=10)
+
+        request = urlopen_mock.call_args.args[0]
+        content_type = request.get_header("Content-type")
+        self.assertIsNotNone(content_type)
+        self.assertIn("multipart/form-data; boundary=callbrief-", content_type)
+        self.assertTrue(request.full_url.endswith("language=en"))
+        form_body = request.data.decode("utf-8")
+        self.assertIn('Content-Disposition: form-data; name="query"', form_body)
+        self.assertIn("Content-Type: application/json; charset=utf-8", form_body)
+        self.assertIn('"type":["0","1","2","8"]', form_body)
+        self.assertIn('"status":["31094501","31094502","31094503"]', form_body)
+        self.assertEqual(report.total_results, 0)
 
     def test_funding_tenders_reports_safe_schema_diagnostics_for_rejected_rows(self) -> None:
         response = {

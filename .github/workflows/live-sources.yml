@@ -232,18 +232,30 @@ jobs:
               f"Successful active sources: **{successful}/{len(sources)}**; required: **at least 3**.",
               f"Live records: **{len(records)}**; status counts: `{dict(sorted(by_status.items()))}`.",
               f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
+              f"Record quality by source: `{summary['live_corpus'].get('record_quality_by_source', {})}`.",
               "",
-              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Source timestamp | Elapsed ms | Gate |",
-              "|---|---:|---:|---:|---:|---|---|---|---:|---|",
+              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Call/topic IDs | Detail URLs | Opportunity types | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---:|---|---|---:|---:|---|---|---:|---|",
           ]
           for item in sources:
+              source_id = str(item.get('source_id', 'unknown'))
+              quality_source_id = 'cinea_life' if source_id == 'cinea' else source_id
+              quality = summary['live_corpus'].get('record_quality_by_source', {}).get(
+                  quality_source_id, {}
+              )
+              call_topic_ids = quality.get('records_with_official_call_or_topic_id', 0)
+              topic_urls = quality.get('records_with_canonical_topic_url', 0)
+              tender_urls = quality.get('records_with_canonical_tender_url', 0)
+              opportunity_types = quality.get('opportunity_type_counts', {})
               lines.append(
-                  f"| {item.get('source_id')} | {item.get('http_status') or 'failed'} | "
+                  f"| {source_id} | {item.get('http_status') or 'failed'} | "
                   f"{item.get('response_bytes')} | {item.get('rows_returned')} / "
                   f"{item.get('total_results')} | {item.get('rows_received')} / "
                   f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
                   f"{item.get('pagination_state')} | {item.get('schema_status')} / "
-                  f"{item.get('parser_result')} | {item.get('source_timestamp')} | "
+                  f"{item.get('parser_result')} | {call_topic_ids} | "
+                  f"{topic_urls} topic / {tender_urls} tender | `{opportunity_types}` | "
+                  f"{item.get('source_timestamp')} | "
                   f"{item.get('elapsed_ms')} | {'pass' if item.get('workflow_gate_success') else 'fail'} |"
               )
           with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as handle:

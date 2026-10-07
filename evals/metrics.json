@@ -26,7 +26,7 @@
       "status": "measured_registry_configuration",
       "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "Quatro adaptadores oficiais estão ativos no registo: Funding & Tenders, TED, CINEA e XLSX do Plano Anual Portugal 2030. TED cobre contratação pública; o Plano Anual fornece apenas previsões. A disponibilidade HTTP não foi confirmada nesta máquina."
+      "measurement_note": "Quatro adaptadores oficiais estão ativos no registo: Funding & Tenders, TED, CINEA e XLSX do Plano Anual Portugal 2030. TED cobre contratação pública; o Plano Anual fornece apenas previsões. O estado do registo não equivale a uma validação de aquisição em direto."
     },
     {
       "id": "official_call_records_collected",
@@ -131,10 +131,10 @@
       "id": "live_source_check_success_count",
       "definition": "Adaptadores de fonte validados por pedidos HTTP reais num agente GitHub-hosted.",
       "measured_value": null,
-      "status": "not_run",
+      "status": "pending_corrected_source_quality_check",
       "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "O workflow manual do GitHub Actions foi acrescentado, mas ainda não correu. O evento workflow_dispatch só é aceite quando o ficheiro está no ramo predefinido. Por isso, não há contagem de fontes validadas em direto."
+      "measurement_note": "O workflow manual do GitHub Actions está disponível. O resultado da consulta corrigida à Funding & Tenders ainda está por medir; a contagem só considera percursos com registos canónicos válidos, além de HTTP, esquema, parser e paginação corretos."
     },
     {
       "id": "source_supported_eligibility_examples",

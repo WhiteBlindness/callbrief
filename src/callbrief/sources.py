@@ -7,6 +7,7 @@ import ipaddress
 import json
 import posixpath
 import re
+import secrets
 import unicodedata
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -16,7 +17,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 from urllib.error import HTTPError, URLError
-from urllib.parse import parse_qs, urlencode, urljoin, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
 from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
@@ -291,6 +292,61 @@ def _post_json(
         len(body),
         last_modified,
         hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
+
+
+def _post_multipart_form_json(
+    endpoint: str,
+    params: Mapping[str, str],
+    payload: Mapping[str, object],
+    timeout_seconds: float,
+) -> HttpJsonResponse:
+    """POST a JSON query as a multipart form field to the public F&T API."""
+    boundary = f"callbrief-{secrets.token_hex(16)}"
+    query = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = b"\r\n".join(
+        (
+            f"--{boundary}".encode("ascii"),
+            b'Content-Disposition: form-data; name="query"',
+            b"Content-Type: application/json; charset=utf-8",
+            b"",
+            query,
+            f"--{boundary}--".encode("ascii"),
+            b"",
+        )
+    )
+    url = f"{endpoint}?{urlencode(params)}" if params else endpoint
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = int(getattr(response, "status", 200))
+            last_modified = response.headers.get("Last-Modified")
+    except HTTPError as exc:
+        raise SourceError(f"Source API returned HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError) as exc:
+        raise SourceError(f"Source API request failed: {type(exc).__name__}") from None
+    if len(response_body) > MAX_RESPONSE_BYTES:
+        raise SourceError("Source API response exceeds 5 MiB")
+    try:
+        value = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceError("Source API returned invalid JSON") from exc
+    return HttpJsonResponse(
+        value,
+        status_code,
+        len(response_body),
+        last_modified,
+        hashlib.sha256(response_body).hexdigest(),
         EvidenceProvenance.LIVE_SOURCE_VERIFIED,
     )
 
@@ -1189,6 +1245,52 @@ def _ted_title(record: Mapping[str, object]) -> tuple[str, str] | None:
     return None
 
 
+def _funding_tenders_details_url(record: Mapping[str, object]) -> str | None:
+    for name in (
+        "metadata.esIN_detailsUrl",
+        "url",
+        "webUrl",
+        "topicUrl",
+        "link",
+        "urlEN",
+        "permalink",
+    ):
+        value = record.get(name)
+        if not isinstance(value, str) or not value.startswith("https://"):
+            continue
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError:
+            continue
+        path = parsed.path.casefold().rstrip("/")
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname
+            and parsed.hostname.casefold().rstrip(".") == "ec.europa.eu"
+            and parsed.username is None
+            and parsed.password is None
+            and port in {None, 443}
+            and re.fullmatch(
+                r"/info/funding-tenders/opportunities/portal/screen/opportunities/"
+                r"(?:topic|tender)-details/[^/]+",
+                path,
+            )
+        ):
+            return value
+    return None
+
+
+def _funding_tenders_url_identifier(url: str) -> str | None:
+    parsed = urlparse(url)
+    match = re.search(r"/(?:topic|tender)-details/([^/]+)/?$", parsed.path, re.IGNORECASE)
+    return unquote(match.group(1)) if match is not None else None
+
+
+def _identifier_token(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
 def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
     direct_fields = {
         "id",
@@ -1259,6 +1361,7 @@ def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
         "esST_programmes",
         "esIN_detailsUrl",
         "REFERENCE",
+        "es_ContentType",
     )
     if isinstance(metadata, Mapping):
         for key in metadata_fields:
@@ -1275,11 +1378,13 @@ class FundingTendersAdapter:
 
     source_id = "eu_funding_tenders"
     endpoint = "https://api.tech.ec.europa.eu/search-api/prod/rest/search"
+    opportunity_type_codes = ("0", "1", "2", "8")
+    active_status_codes = ("31094501", "31094502", "31094503")
 
     def __init__(
         self,
         *,
-        transport: JsonTransport = _post_json,
+        transport: JsonTransport = _post_multipart_form_json,
         timeout_seconds: float = 20,
         api_key: str = "SEDIA",
     ) -> None:
@@ -1299,8 +1404,8 @@ class FundingTendersAdapter:
             raise ValueError("query must be text no longer than 500 characters")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        # The API uses a JSON query body and public URL parameters. The default
-        # query deliberately leaves filtering to its `text` parameter.
+        # The API expects this JSON object in a multipart form field named
+        # `query`; URL parameters alone do not apply these type and status filters.
         transport_response = self._transport(
             self.endpoint,
             {
@@ -1310,7 +1415,14 @@ class FundingTendersAdapter:
                 "pageNumber": "1",
                 "language": "en",
             },
-            {"bool": {"must": [{"terms": {"status": ["31094501", "31094502", "31094503"]}}]}},
+            {
+                "bool": {
+                    "must": [
+                        {"terms": {"type": list(self.opportunity_type_codes)}},
+                        {"terms": {"status": list(self.active_status_codes)}},
+                    ]
+                }
+            },
             self.timeout_seconds,
         )
         (
@@ -1383,24 +1495,52 @@ class FundingTendersAdapter:
                     rejection_reasons.get("missing_supported_title", 0) + 1
                 )
                 continue
+            details_url = _funding_tenders_details_url(record)
+            if details_url is None:
+                rejected += 1
+                rejection_reasons["missing_canonical_details_url"] = (
+                    rejection_reasons.get("missing_canonical_details_url", 0) + 1
+                )
+                continue
+            details_identifier = _funding_tenders_url_identifier(details_url)
+            source_identifiers = tuple(
+                value
+                for name in (
+                    "topicCode",
+                    "topicId",
+                    "callIdentifier",
+                    "callId",
+                    "identifier",
+                    "reference",
+                    "metadata.REFERENCE",
+                    "id",
+                )
+                if isinstance((value := record.get(name)), str) and value.strip()
+            )
+            if (
+                details_identifier is None
+                or _identifier_token(details_identifier)
+                not in {_identifier_token(value) for value in source_identifiers}
+            ):
+                rejected += 1
+                rejection_reasons["details_identifier_mismatch"] = (
+                    rejection_reasons.get("details_identifier_mismatch", 0) + 1
+                )
+                continue
+            source_type = _first_text(record, ("type",))
+            if (
+                source_type is not None
+                and source_type.isdecimal()
+                and source_type not in self.opportunity_type_codes
+            ):
+                rejected += 1
+                rejection_reasons["unsupported_opportunity_type"] = (
+                    rejection_reasons.get("unsupported_opportunity_type", 0) + 1
+                )
+                continue
             title = title_value[:300]
             record_id = stable_id[:200]
-            url_keys = (
-                "metadata.esIN_detailsUrl",
-                "url",
-                "webUrl",
-                "topicUrl",
-                "link",
-                "urlEN",
-                "permalink",
-            )
-            links = tuple(
-                dict.fromkeys(
-                    value
-                    for key in url_keys
-                    if isinstance((value := record.get(key)), str) and value.startswith("https://")
-                )
-            )
+            links = (details_url,)
             scalar_metadata = tuple(
                 (key, str(value)[:500])
                 for key, value in record.items()

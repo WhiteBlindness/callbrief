@@ -4,7 +4,7 @@
 
 CallBrief reúne avisos públicos, conserva a origem de cada facto e compara oportunidades com perfis separados de clientes. Esta versão demonstra um protótipo local com dados reais consultados em páginas oficiais, recuperação lexical, normalização explicável e armazenamento SQLite.
 
-**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra abaixo foi transcrita manualmente de páginas oficiais e não foi recolhida pelos adaptadores.
+**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra abaixo foi transcrita manualmente de páginas oficiais e não foi recolhida pelos adaptadores. A verificação final da aquisição em direto aguarda nova execução com a consulta corrigida à Funding & Tenders.
 
 ## O que demonstra
 
@@ -19,7 +19,7 @@ CallBrief reúne avisos públicos, conserva a origem de cada facto e compara opo
 
 | Fonte | Cobertura | Adaptador | Reutilização comercial |
 | --- | --- | --- | --- |
-| [Funding & Tenders](https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/support/apis) | Subvenções e avisos de programas da UE | API JSON ativa | Condições específicas dos dados da API por confirmar |
+| [Funding & Tenders](https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/support/apis) | Subvenções e avisos de programas da UE | API de pesquisa pública; filtro JSON enviado em formulário multipart | Condições específicas dos dados da API por confirmar |
 | [TED](https://docs.ted.europa.eu/api/latest/search.html) | Contratação pública, não subvenções | API de pesquisa ativa | Reutilização documentada ([aviso legal](https://ted.europa.eu/en/legal-notice)), sujeita às regras de utilização adequada |
 | [CINEA, avisos LIFE 2026](https://cinea.ec.europa.eu/life-calls-proposals-2026_en) | Identificadores, programas, estados, datas e ligações para avisos LIFE | Lista e páginas de detalhe em HTML | Reutilização geral da Comissão com atribuição, salvo exceções e direitos de terceiros ([aviso legal](https://commission.europa.eu/legal-notice_en)) |
 | [COMPETE 2030](https://compete2030.gov.pt/avisos/) | Avisos nacionais | Sem adaptador ativo | A reutilização automática aguarda esclarecimento dos termos |
@@ -152,7 +152,7 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | Medida | Resultado | Leitura |
 | --- | ---: | --- |
 | Adaptadores oficiais ativos no catálogo | 4 | Funding & Tenders, TED, CINEA e Plano Anual Portugal 2030; o Plano Anual só contém previsões |
-| Verificação de fontes em direto | Pendente | O fluxo manual está preparado; ainda não há uma execução num agente alojado pelo GitHub |
+| Verificação de fontes em direto | Pendente | O fluxo manual exige resposta, esquema, paginação e registos válidos em pelo menos três dos quatro percursos; o resultado da consulta corrigida à Funding & Tenders ainda está por medir |
 | Registos reais na amostra manual | 30 | 10 COMPETE, 15 Funding & Tenders e 5 CINEA |
 | Consultas de recuperação | 59 | 47 com resposta relevante e 12 sem resposta, divididas entre desenvolvimento e validação |
 | *Recall@5*, referência e pesquisa atual | 0,912 e 0,912 | Nas 34 consultas respondíveis de validação; não há melhoria de ordenação medida |
@@ -167,7 +167,7 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 
 As medidas de normalização, recuperação, citação e deduplicação não foram validadas por uma segunda pessoa. O desempenho de ordenação da pesquisa atual é igual ao da referência neste conjunto. A abstenção recupera cinco das seis consultas sem resposta, mas também recusa algumas consultas respondíveis. O conjunto de validação é pequeno e os resultados não medem qualidade em produção. A elegibilidade demonstra apenas os campos de tipo de beneficiário e região publicados no Plano Anual; o plano contém previsões e não confirma avisos abertos.
 
-Na avaliação de deduplicação, os campos CINEA são transcritos das páginas oficiais e o lado Funding & Tenders é um registo de formato API criado a partir da ligação canónica. Não é uma resposta da API capturada em direto. O teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial; a aquisição em direto continua pendente.
+Na avaliação de deduplicação, os campos CINEA são transcritos das páginas oficiais e o lado Funding & Tenders é um registo de formato API criado a partir da ligação canónica. Não é uma resposta da API capturada em direto. O teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial; a avaliação dos duplicados obtidos em direto continua pendente.
 
 O conjunto sintético `evals/corpus/scenarios.json` continua a testar elegibilidade, fontes contraditórias, duplicados, alterações, recuperação, conteúdo malicioso e isolamento. Esses cenários não se confundem com os avisos reais. A suite local confirma os comportamentos cobertos pelos testes; não mede isolamento ou qualidade num serviço alojado.
 
@@ -192,7 +192,7 @@ O CI está configurado para Python 3.12, 3.13 e 3.14, além de formatação, an�
 
 ## Limites desta versão
 
-- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes. A aquisição em direto ainda não foi demonstrada.
+- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes. A verificação final da aquisição em direto ainda está pendente; os resultados desse fluxo não se confundem com a amostra rotulada.
 - A licença e as condições de reutilização comercial dos dados devolvidos pela API Funding & Tenders precisam de confirmação específica.
 - A recolha dos avisos formalmente abertos do Portugal 2030 e do COMPETE aguarda uma fonte estruturada autorizada ou esclarecimento de reutilização. O adaptador do Plano Anual serve apenas previsões e mantém a redistribuição comercial desativada.
 - Agent-Reach tem testes de contrato com serviço falso; a ligação local real não foi executada e não está disponível no ambiente de nuvem.

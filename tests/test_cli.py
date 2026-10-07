@@ -217,6 +217,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(funding_report["response_boolean_flags"], {"timedOut": False})
         self.assertEqual(funding_report["source_payload_sha256"], ["a" * 64])
         self.assertEqual(funding_report["response_provenance_status"], "LIVE_SOURCE_VERIFIED")
+        funding_quality = report["live_corpus"]["record_quality_by_source"][
+            "eu_funding_tenders"
+        ]
+        self.assertEqual(funding_quality["records_with_official_call_or_topic_id"], 0)
+        self.assertEqual(funding_quality["records_with_canonical_topic_url"], 0)
+        self.assertEqual(funding_quality["opportunity_type_counts"], {"unknown": 1})
         for item in report["sources"]:
             self.assertIn("source_id", item)
             self.assertIn("response_bytes", item)

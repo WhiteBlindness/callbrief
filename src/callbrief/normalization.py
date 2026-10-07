@@ -9,7 +9,7 @@ import unicodedata
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .domain import (
     EligibilityRule,
@@ -25,6 +25,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "record_id": (
         "record_id",
         "id",
+        "reference",
         "metadata.REFERENCE",
         "topicCode",
         "callIdentifier",
@@ -136,6 +137,13 @@ _INTEGER_FIELDS: dict[str, tuple[str, ...]] = {
     "trl_min": ("trlMin", "technologyReadinessLevelMin"),
     "trl_max": ("trlMax", "technologyReadinessLevelMax"),
 }
+_OPPORTUNITY_TYPE_ALIASES = (
+    "opportunityType",
+    "typeName",
+    "fundingType",
+    "type",
+    "metadata.es_ContentType",
+)
 
 
 def _key(value: str) -> str:
@@ -383,7 +391,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
 
 
 def _opportunity_type(record: dict[str, Any]) -> OpportunityType:
-    value = _text(record, ("opportunityType", "typeName", "fundingType", "type"))
+    value = _text(record, _OPPORTUNITY_TYPE_ALIASES)
     if value is None:
         return OpportunityType.UNKNOWN
     normalized = _key(value)
@@ -400,6 +408,40 @@ def _opportunity_type(record: dict[str, Any]) -> OpportunityType:
         "reimbursableadvance": OpportunityType.REPAYABLE_INCENTIVE,
     }
     return known.get(normalized, OpportunityType.UNKNOWN)
+
+
+def _funding_details_identity(url: str | None) -> tuple[str, str] | None:
+    if url is None:
+        return None
+    path = urlparse(url).path
+    match = re.search(r"/(topic|tender)-details/([^/]+)/?$", path, re.IGNORECASE)
+    if match is None:
+        return None
+    return match.group(1).casefold(), unquote(match.group(2))
+
+
+def _identifier_token(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _source_opportunity_type(
+    document: SourceDocument, record: dict[str, Any], canonical_url: str | None
+) -> OpportunityType:
+    if document.source_id == "ted_eu_procurement":
+        return OpportunityType.TENDER
+    has_type_evidence = _has_evidence(document, record, _OPPORTUNITY_TYPE_ALIASES)
+    if has_type_evidence:
+        value = _text(record, _OPPORTUNITY_TYPE_ALIASES)
+        if document.source_id == "eu_funding_tenders" and value in {"0", "1", "2", "8"}:
+            return OpportunityType.TENDER if value == "0" else OpportunityType.GRANT
+        normalized = _opportunity_type(record)
+        if normalized is not OpportunityType.UNKNOWN:
+            return normalized
+    if document.source_id == "eu_funding_tenders":
+        identity = _funding_details_identity(canonical_url)
+        if identity is not None:
+            return OpportunityType.TENDER if identity[0] == "tender" else OpportunityType.GRANT
+    return OpportunityType.UNKNOWN
 
 
 def _field_evidence(
@@ -629,7 +671,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     evidence_keys = (
         *_FIELD_ALIASES.values(),
         ("status", "topicStatus", "callStatus", "metadata.status"),
-        ("opportunityType", "typeName", "fundingType", "type"),
+        _OPPORTUNITY_TYPE_ALIASES,
         ("publicationDate", "publishedAt", "publication-date", "PD"),
         (
             "openingDate",
@@ -728,6 +770,44 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         )
     ):
         canonical_url = None
+    topic_id = (
+        _text(record, _FIELD_ALIASES["topic_id"])
+        if _has_evidence(document, record, _FIELD_ALIASES["topic_id"])
+        else None
+    )
+    details_identity = (
+        _funding_details_identity(canonical_url)
+        if document.source_id == "eu_funding_tenders"
+        else None
+    )
+    source_identifier = None
+    if details_identity is not None:
+        for alias in (
+            "topicCode",
+            "topicId",
+            "callIdentifier",
+            "callId",
+            "identifier",
+            "reference",
+            "metadata.REFERENCE",
+            "id",
+        ):
+            identifier = _text(record, (alias,))
+            if (
+                identifier is not None
+                and _has_evidence(document, record, (alias,))
+                and _identifier_token(identifier) == _identifier_token(details_identity[1])
+            ):
+                source_identifier = identifier
+                break
+    if source_identifier is not None:
+        call_id = source_identifier
+        if details_identity is not None and details_identity[0] == "topic":
+            topic_id = topic_id or source_identifier
+    elif document.source_id == "eu_funding_tenders":
+        call_id_field = _lookup(record, _FIELD_ALIASES["call_id"])
+        if call_id_field is not None and call_id_field[0] == "id":
+            call_id = None
     opportunity_id = hashlib.sha256(f"{document.source_id}\0{record_id}".encode()).hexdigest()[:24]
     normalized_fields: dict[str, Any] = {}
     for name, aliases in _LIST_FIELDS.items():
@@ -775,24 +855,12 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         source_record_id=record_id,
         programme=programme,
         call_id=call_id,
-        topic_id=(
-            _text(record, _FIELD_ALIASES["topic_id"])
-            if _has_evidence(document, record, _FIELD_ALIASES["topic_id"])
-            else None
-        ),
+        topic_id=topic_id,
         title=title,
         authority=authority,
         canonical_url=canonical_url,
         status=_status(document, record),
-        opportunity_type=(
-            OpportunityType.TENDER
-            if document.source_id == "ted_eu_procurement"
-            else _opportunity_type(record)
-            if _has_evidence(
-                document, record, ("opportunityType", "typeName", "fundingType", "type")
-            )
-            else OpportunityType.UNKNOWN
-        ),
+        opportunity_type=_source_opportunity_type(document, record, canonical_url),
         publication_date=(
             _date(record, ("publicationDate", "publishedAt", "publication-date", "PD"))
             if _has_evidence(

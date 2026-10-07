@@ -538,6 +538,39 @@ def _source_check_all(args: argparse.Namespace) -> int:
         for item in record.get("evidence", []):
             provenance_status = str(item.get("provenance_status", "unknown"))
             provenance_counts[provenance_status] = provenance_counts.get(provenance_status, 0) + 1
+    quality_by_source: dict[str, dict[str, Any]] = {}
+    for source_id in sorted({str(record.get("source_id", "unknown")) for record in live_records}):
+        source_records = [
+            record for record in live_records if record.get("source_id") == source_id
+        ]
+        opportunity_type_counts: dict[str, int] = {}
+        for record in source_records:
+            opportunity_type = record.get("opportunity_type", OpportunityType.UNKNOWN)
+            value = (
+                opportunity_type.value
+                if isinstance(opportunity_type, OpportunityType)
+                else str(opportunity_type)
+            )
+            opportunity_type_counts[value] = opportunity_type_counts.get(value, 0) + 1
+        quality_by_source[source_id] = {
+            "records_with_call_id": sum(bool(record.get("call_id")) for record in source_records),
+            "records_with_topic_id": sum(bool(record.get("topic_id")) for record in source_records),
+            "records_with_official_call_or_topic_id": sum(
+                bool(record.get("call_id") or record.get("topic_id"))
+                for record in source_records
+            ),
+            "records_with_canonical_topic_url": sum(
+                "/opportunities/topic-details/"
+                in str(record.get("canonical_url") or "").casefold()
+                for record in source_records
+            ),
+            "records_with_canonical_tender_url": sum(
+                "/opportunities/tender-details/"
+                in str(record.get("canonical_url") or "").casefold()
+                for record in source_records
+            ),
+            "opportunity_type_counts": dict(sorted(opportunity_type_counts.items())),
+        }
     report: dict[str, Any] = {
         "checked_at": datetime.now(UTC).isoformat(),
         "active_sources": len(definitions),
@@ -547,6 +580,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
             "records_acquired": len(live_records),
             "persistence": "optional local file; not uploaded by the workflow",
             "evidence_provenance_counts": provenance_counts,
+            "record_quality_by_source": quality_by_source,
         },
     }
     rendered = json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n"
