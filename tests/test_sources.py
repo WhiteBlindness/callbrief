@@ -179,7 +179,7 @@ class SourceAdapterTests(unittest.TestCase):
             ({"results": {"unexpected_schema": []}}, "nested results wrapper"),
         ):
             with self.subTest(response=response):
-                adapter = FundingTendersAdapter(transport=lambda *_: response)
+                adapter = FundingTendersAdapter(transport=lambda *_, response=response: response)
                 with self.assertRaisesRegex(SourceError, message):
                     adapter.fetch()
 
