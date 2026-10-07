@@ -273,11 +273,7 @@ def _strings(record: dict[str, Any], aliases: tuple[str, ...]) -> tuple[str, ...
         return None
     value = found[1]
     if isinstance(value, str) and value.strip():
-        parts = tuple(
-            part.strip()
-            for part in re.split(r"[|;\n]+", value)
-            if part.strip()
-        )
+        parts = tuple(part.strip() for part in re.split(r"[|;\n]+", value) if part.strip())
         return parts or None
     if not isinstance(value, list) or not all(
         isinstance(item, str) and item.strip() for item in value
@@ -303,11 +299,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
         return OpportunityStatus.UNKNOWN
 
     status_aliases = ("status", "topicStatus", "callStatus")
-    value = (
-        _text(record, status_aliases)
-        if _has_evidence(document, record, status_aliases)
-        else None
-    )
+    value = _text(record, status_aliases) if _has_evidence(document, record, status_aliases) else None
     if value is None:
         deadline_aliases = (
             "deadline",
@@ -401,9 +393,7 @@ def _field_evidence(
             while value_start < len(document.text) and document.text[value_start].isspace():
                 value_start += 1
             try:
-                decoded, value_length = json.JSONDecoder().raw_decode(
-                    document.text[value_start:]
-                )
+                decoded, value_length = json.JSONDecoder().raw_decode(document.text[value_start:])
             except json.JSONDecodeError:
                 decoded = None
                 value_length = 0

@@ -189,9 +189,7 @@ class EvaluationMetricsTests(unittest.TestCase):
             85,
         )
         self.assertEqual(
-            metrics["source_qualification_evidence"]["measured_value"][
-                "preserved_on_opportunity"
-            ],
+            metrics["source_qualification_evidence"]["measured_value"]["preserved_on_opportunity"],
             1,
         )
         self.assertEqual(
@@ -211,11 +209,14 @@ class EvaluationMetricsTests(unittest.TestCase):
         report = run_real_corpus_benchmark()
 
         self.assertEqual(report["unique_real_opportunities"], 30)
-        self.assertEqual(report["status_counts"], {
-            "open": 24,
-            "upcoming": 1,
-            "closed": 5,
-        })
+        self.assertEqual(
+            report["status_counts"],
+            {
+                "open": 24,
+                "upcoming": 1,
+                "closed": 5,
+            },
+        )
         self.assertEqual(report["retrieval"]["queries_total"], 27)
         self.assertEqual(report["retrieval"]["answerable_queries"], 26)
         self.assertEqual(report["retrieval"]["baseline"]["recall_at_5"], 1.0)
@@ -226,9 +227,7 @@ class EvaluationMetricsTests(unittest.TestCase):
         categories = {item["category"] for item in dataset["queries"]}
         self.assertIn("funding size", categories)
         self.assertIn("deadline", categories)
-        self.assertEqual(
-            report["retrieval"]["current"]["no_answer_false_positive_rate"], 1.0
-        )
+        self.assertEqual(report["retrieval"]["current"]["no_answer_false_positive_rate"], 1.0)
         self.assertEqual(report["normalization"]["available"], 85)
         self.assertEqual(report["normalization"]["correct"], 85)
         self.assertEqual(report["normalization"]["citation_structure"]["cited_facts"], 85)

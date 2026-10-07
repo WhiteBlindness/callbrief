@@ -65,10 +65,13 @@ class CliTests(unittest.TestCase):
                 )
 
         output = io.StringIO()
-        with patch(
-            "callbrief.cli.create_adapter_registry",
-            return_value={"ted_eu_procurement": Adapter()},
-        ), redirect_stdout(output):
+        with (
+            patch(
+                "callbrief.cli.create_adapter_registry",
+                return_value={"ted_eu_procurement": Adapter()},
+            ),
+            redirect_stdout(output),
+        ):
             code = main(["source", "check", "ted_eu_procurement", "--limit", "20"])
 
         self.assertEqual(code, 0)
@@ -85,10 +88,13 @@ class CliTests(unittest.TestCase):
                 raise SourceError("Source API request failed: URLError")
 
         output = io.StringIO()
-        with patch(
-            "callbrief.cli.create_adapter_registry",
-            return_value={"eu_funding_tenders": Adapter()},
-        ), redirect_stdout(output):
+        with (
+            patch(
+                "callbrief.cli.create_adapter_registry",
+                return_value={"eu_funding_tenders": Adapter()},
+            ),
+            redirect_stdout(output),
+        ):
             code = main(["source", "check", "eu_funding_tenders"])
 
         self.assertEqual(code, 1)

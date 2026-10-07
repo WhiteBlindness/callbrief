@@ -83,9 +83,7 @@ def _annual_plan_xlsx() -> bytes:
         cells = []
         for column in range(1, count + 1):
             column_name = chr(ord("A") + column - 1)
-            cells.append(
-                f'<c r="{column_name}{row_number}" t="s"><v>{index}</v></c>'
-            )
+            cells.append(f'<c r="{column_name}{row_number}" t="s"><v>{index}</v></c>')
             index += 1
         rows.append(f'<row r="{row_number}">{"".join(cells)}</row>')
     payload = BytesIO()
@@ -98,7 +96,7 @@ def _annual_plan_xlsx() -> bytes:
         workbook.writestr(
             "xl/worksheets/sheet1.xml",
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
-            f'<sheetData>{"".join(rows)}</sheetData></worksheet>',
+            f"<sheetData>{''.join(rows)}</sheetData></worksheet>",
         )
     return payload.getvalue()
 
@@ -150,9 +148,7 @@ class SourceAdapterTests(unittest.TestCase):
                     },
                     {
                         "bool": {
-                            "must": [
-                                {"terms": {"status": ["31094501", "31094502", "31094503"]}}
-                            ]
+                            "must": [{"terms": {"status": ["31094501", "31094502", "31094503"]}}]
                         }
                     },
                     20,
@@ -383,7 +379,9 @@ class SourceAdapterTests(unittest.TestCase):
             )
             opportunities.append(normalize_source_document(document))
 
-        evidence_ids = [item.evidence_id for opportunity in opportunities for item in opportunity.evidence]
+        evidence_ids = [
+            item.evidence_id for opportunity in opportunities for item in opportunity.evidence
+        ]
         self.assertEqual(len(evidence_ids), len(set(evidence_ids)))
 
     def test_cinea_adapter_extracts_visible_deadline_evidence_and_reports_page_health(self) -> None:

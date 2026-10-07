@@ -147,7 +147,7 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | *Recall@5*, pesquisa atual | 1,00 | Sem melhoria face à referência neste conjunto |
 | MRR@5, referência e pesquisa atual | 1,00 e 1,00 | Todos os relevantes surgiram em primeiro lugar neste conjunto |
 | Falsos positivos na consulta sem resposta | 1 de 1, nos dois métodos | A pesquisa não se absteve |
-| Tempo médio de pesquisa local | Referência: 1,34 ms; atual: 2,31 ms | Uma execução, 27 consultas e 30 registos em memória; exclui acesso às fontes |
+| Tempo médio de pesquisa local | Referência: 1,03 ms; atual: 1,77 ms | Uma execução, 27 consultas e 30 registos em memória; exclui acesso às fontes |
 | Normalização de título, estado e prazo | 85/85 corretos, 1,00 | Rótulos de referência de passagem única, sem segunda revisão |
 | Citações estruturais | 85/85 excertos exatos, 1,00 | Sem resumos criptográficos das respostas oficiais arquivadas |
 | Evidência da condição da prorrogação | 1/1 excerto ligado à oportunidade | Ligação e localização no PDF preservadas; o corpo e o resumo criptográfico não foram arquivados |

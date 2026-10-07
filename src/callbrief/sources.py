@@ -413,9 +413,7 @@ def _xlsx_sheet_path(archive: ZipFile) -> str:
     names = set(archive.namelist())
     if "xl/workbook.xml" not in names:
         candidates = sorted(
-            name
-            for name in names
-            if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name)
+            name for name in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name)
         )
         if candidates:
             return candidates[0]
@@ -564,11 +562,7 @@ def _annual_plan_header_indexes(header: tuple[str, ...]) -> tuple[int, int, int]
     indexes: list[int] = []
     for field in ("record_id", "title", "programme"):
         found = next(
-            (
-                index
-                for index, value in enumerate(normalized)
-                if value in fields[field]
-            ),
+            (index for index, value in enumerate(normalized) if value in fields[field]),
             None,
         )
         if found is None:
@@ -667,9 +661,7 @@ class CineaLifeAdapter:
 
     source_id = "cinea_life"
     endpoint = "https://cinea.ec.europa.eu/life-calls-proposals-2026_en"
-    _DEADLINE = re.compile(
-        r"Deadline\s+date\s*:\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE
-    )
+    _DEADLINE = re.compile(r"Deadline\s+date\s*:\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE)
     _MONTHS = {
         "january": 1,
         "february": 2,
@@ -768,7 +760,7 @@ class CineaLifeAdapter:
         rejected = 0
         for index, anchor in enumerate(candidates):
             context_end = candidates[index + 1].start if index + 1 < len(candidates) else len(text)
-            context = text[anchor.end:context_end]
+            context = text[anchor.end : context_end]
             match = self._DEADLINE.search(context)
             detail_url = self._official_link(self.endpoint, anchor.href)
             if match is None or detail_url is None:
@@ -779,7 +771,7 @@ class CineaLifeAdapter:
                 rejected += 1
                 continue
             excerpt_end = anchor.end + match.end()
-            excerpt = text[anchor.start:excerpt_end].strip()
+            excerpt = text[anchor.start : excerpt_end].strip()
             heading = re.search(
                 r"\bLIFE\s+calls\s+for\s+proposals\s+2026\b",
                 text,
@@ -895,18 +887,10 @@ class FundingTendersAdapter:
                 "pageNumber": "1",
                 "language": "en",
             },
-            {
-                "bool": {
-                    "must": [
-                        {"terms": {"status": ["31094501", "31094502", "31094503"]}}
-                    ]
-                }
-            },
+            {"bool": {"must": [{"terms": {"status": ["31094501", "31094502", "31094503"]}}]}},
             self.timeout_seconds,
         )
-        response, http_status, response_bytes, last_modified = _response_details(
-            transport_response
-        )
+        response, http_status, response_bytes, last_modified = _response_details(transport_response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -1022,9 +1006,7 @@ class TedSearchAdapter:
             },
             self.timeout_seconds,
         )
-        response, http_status, response_bytes, last_modified = _response_details(
-            transport_response
-        )
+        response, http_status, response_bytes, last_modified = _response_details(transport_response)
         retrieved_at = datetime.now(UTC)
         rows = _result_rows(response)
         total = _total_results(response)
@@ -1163,9 +1145,7 @@ class Portugal2030AnnualPlanAdapter:
                 source_id=self.source_id,
                 source_url=self.endpoint,
                 retrieved_at=retrieved_at,
-                content_type=(
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                ),
+                content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
                 title=title[:300],
                 text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
                 metadata=(

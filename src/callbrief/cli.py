@@ -324,9 +324,7 @@ def _source_check(args: argparse.Namespace) -> int:
     successful_http = 200 <= result.http_status < 300
     print(f"Resultado: {'OK' if successful_http and rejected == 0 else 'falhou'}.")
     print(f"HTTP: {result.http_status}.")
-    print(
-        f"Registos: recebidos {result.rows_received}; aceites {valid}; rejeitados {rejected}."
-    )
+    print(f"Registos: recebidos {result.rows_received}; aceites {valid}; rejeitados {rejected}.")
     print(f"Tamanho da resposta: {result.response_bytes} bytes; esquema: {schema_state}.")
     dates = [
         value.date()
