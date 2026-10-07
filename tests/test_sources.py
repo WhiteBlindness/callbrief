@@ -363,7 +363,10 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertIn("multipart/form-data; boundary=callbrief-", content_type)
         self.assertTrue(request.full_url.endswith("language=en"))
         form_body = request.data.decode("utf-8")
-        self.assertIn('Content-Disposition: form-data; name="query"', form_body)
+        self.assertIn(
+            'Content-Disposition: form-data; name="query"; filename="query.json"',
+            form_body,
+        )
         self.assertIn("Content-Type: application/json; charset=utf-8", form_body)
         self.assertIn('"type":["0","1","2","8"]', form_body)
         self.assertIn('"status":["31094501","31094502","31094503"]', form_body)

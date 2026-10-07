@@ -308,7 +308,7 @@ def _post_multipart_form_json(
     body = b"\r\n".join(
         (
             f"--{boundary}".encode("ascii"),
-            b'Content-Disposition: form-data; name="query"',
+            b'Content-Disposition: form-data; name="query"; filename="query.json"',
             b"Content-Type: application/json; charset=utf-8",
             b"",
             query,
