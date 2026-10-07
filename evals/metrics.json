@@ -129,12 +129,84 @@
     },
     {
       "id": "live_source_check_success_count",
-      "definition": "Adaptadores de fonte validados por pedidos HTTP reais num agente GitHub-hosted.",
-      "measured_value": null,
-      "status": "pending_corrected_source_quality_check",
+      "definition": "Adaptadores de fonte validados por pedidos HTTP reais num executor alojado pelo GitHub.",
+      "measured_value": {
+        "success_count": 4,
+        "active_source_count": 4,
+        "selected_ref": "feat/live-funding-sources-v02",
+        "selected_sha": "2ed0fb90080290e5d380d5a817450fa87b6eebc3",
+        "workflow_run_url": "https://github.com/WhiteBlindness/callbrief/actions/runs/37701724994",
+        "live_corpus_records": 67,
+        "live_evidence_spans": 489,
+        "summary_artifact_only": true,
+        "live_deduplication": {
+          "pairs_compared": 140,
+          "exact_matches": 0,
+          "review_candidates": 0
+        },
+        "sources": [
+          {
+            "source_id": "eu_funding_tenders",
+            "http_status": 200,
+            "response_bytes": 2290184,
+            "rows_received": 20,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 4895.306
+          },
+          {
+            "source_id": "ted_eu_procurement",
+            "http_status": 200,
+            "response_bytes": 165791,
+            "rows_received": 20,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 1536.438
+          },
+          {
+            "source_id": "portugal2030_annual_plan",
+            "http_status": 200,
+            "response_bytes": 65667,
+            "rows_received": 177,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": "Mon, 14 Sep 2026 15:30:16 GMT",
+            "parser_result": "parsed",
+            "elapsed_ms": 996.502
+          },
+          {
+            "source_id": "cinea",
+            "http_status": 200,
+            "response_bytes": 739857,
+            "rows_received": 7,
+            "rows_returned": 7,
+            "rows_accepted": 7,
+            "rows_rejected": 0,
+            "pagination_state": "complete",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 4508.814
+          }
+        ]
+      },
+      "status": "measured_github_hosted_live_run",
       "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "O workflow manual do GitHub Actions está disponível. O resultado da consulta corrigida à Funding & Tenders ainda está por medir; a contagem só considera percursos com registos canónicos válidos, além de HTTP, esquema, parser e paginação corretos."
+      "measurement_note": "Execução manual de 08/10/2026 ao commit indicado: os quatro percursos devolveram HTTP 200, esquema válido, registos aceites e análise concluída. A comparação de duplicados cobre apenas 140 pares da amostra de primeira página (7 CINEA x 20 Funding & Tenders) e não encontrou correspondências; não mede os cinco pares positivos rotulados. O corpus em direto e as 489 evidências foram mantidos no agente e só o resumo compacto foi enviado como artefacto."
     },
     {
       "id": "source_supported_eligibility_examples",

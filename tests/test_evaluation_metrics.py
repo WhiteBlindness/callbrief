@@ -158,6 +158,37 @@ class EvaluationMetricsTests(unittest.TestCase):
             active_source_count,
         )
         self.assertEqual(metrics["official_call_records_collected"]["measured_value"], 30)
+        live_check = metrics["live_source_check_success_count"]
+        self.assertEqual(live_check["status"], "measured_github_hosted_live_run")
+        live_value = live_check["measured_value"]
+        self.assertEqual(live_value["success_count"], 4)
+        self.assertEqual(live_value["active_source_count"], 4)
+        self.assertTrue(live_value["summary_artifact_only"])
+        self.assertEqual(
+            {
+                source["source_id"]
+                for source in live_value["sources"]
+                if source["http_status"] == 200
+                and source["schema_status"] == "valid"
+                and source["parser_result"] == "parsed"
+                and source["rows_accepted"] > 0
+                and source["rows_rejected"] == 0
+            },
+            {
+                "eu_funding_tenders",
+                "ted_eu_procurement",
+                "portugal2030_annual_plan",
+                "cinea",
+            },
+        )
+        self.assertEqual(
+            live_value["live_deduplication"],
+            {
+                "pairs_compared": 140,
+                "exact_matches": 0,
+                "review_candidates": 0,
+            },
+        )
         for metric_id in (
             "deterministic_eligibility_accuracy",
             "multi_tenant_isolation",
