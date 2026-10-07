@@ -366,11 +366,10 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertTrue(request.full_url.endswith("language=en"))
         form_body = request.data.decode("utf-8")
         self.assertIn(
-            'Content-Disposition: form-data; name="query"',
+            'Content-Disposition: form-data; name="query"; filename="query.json"',
             form_body,
         )
-        self.assertNotIn("filename=", form_body)
-        self.assertNotIn("Content-Type: application/json", form_body)
+        self.assertIn("Content-Type: application/json; charset=utf-8", form_body)
         self.assertIn('"type":["0","1","2","8"]', form_body)
         self.assertIn('"status":["31094501","31094502","31094503"]', form_body)
         self.assertEqual(report.total_results, 0)
@@ -469,7 +468,8 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertGreaterEqual(len(registry), 20)
 
     def test_adapter_registry_only_constructs_verified_sources(self) -> None:
-        adapter_map = create_adapter_registry(transport=lambda *_: FIXTURE_RESPONSE)
+        transport = lambda *_: FIXTURE_RESPONSE
+        adapter_map = create_adapter_registry(transport=transport)
         self.assertEqual(
             set(adapter_map),
             {
@@ -483,6 +483,33 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertIsInstance(adapter_map["ted_eu_procurement"], SourceAdapter)
         self.assertIsInstance(adapter_map["cinea"], SourceAdapter)
         self.assertIsInstance(adapter_map["portugal2030_annual_plan"], SourceAdapter)
+        self.assertEqual(len(adapter_map["eu_funding_tenders"].fetch(limit=2)), 2)
+
+    def test_adapter_registry_uses_multipart_transport_for_funding_tenders_by_default(
+        self,
+    ) -> None:
+        response_body = b'{"totalResults":0,"results":[]}'
+
+        class FakeResponse:
+            status = 200
+            headers: dict[str, str] = {}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return None
+
+            def read(self, _maximum: int) -> bytes:
+                return response_body
+
+        adapter = create_adapter_registry()["eu_funding_tenders"]
+        with patch("callbrief.sources.urlopen", return_value=FakeResponse()) as urlopen_mock:
+            adapter.fetch_with_report(limit=1)
+
+        request = urlopen_mock.call_args.args[0]
+        self.assertIn("multipart/form-data", request.get_header("Content-type"))
+        self.assertIn('filename="query.json"', request.data.decode("utf-8"))
 
     def test_portugal2030_annual_plan_maps_forecast_rows_with_cell_evidence(self) -> None:
         payload = _annual_plan_xlsx()

@@ -308,7 +308,8 @@ def _post_multipart_form_json(
     body = b"\r\n".join(
         (
             f"--{boundary}".encode("ascii"),
-            b'Content-Disposition: form-data; name="query"',
+            b'Content-Disposition: form-data; name="query"; filename="query.json"',
+            b"Content-Type: application/json; charset=utf-8",
             b"",
             query,
             f"--{boundary}--".encode("ascii"),
@@ -1958,7 +1959,7 @@ class AgentReachSourceAdapter:
 
 def create_adapter_registry(
     *,
-    transport: JsonTransport = _post_json,
+    transport: JsonTransport | None = None,
     html_transport: TextTransport | None = None,
     binary_transport: BinaryTransport | None = None,
     agent_reach_adapter: SourceAdapter | None = None,
@@ -1966,11 +1967,15 @@ def create_adapter_registry(
     agent_reach_allowed_hosts: Iterable[str] = (),
 ) -> dict[str, SourceAdapter]:
     """Construct registered adapters and optionally attach a host integration."""
+    funding_tenders_transport = (
+        transport if transport is not None else _post_multipart_form_json
+    )
+    ted_transport = transport if transport is not None else _post_json
     adapters: dict[str, SourceAdapter] = {
         definition.source_id: (
-            FundingTendersAdapter(transport=transport)
+            FundingTendersAdapter(transport=funding_tenders_transport)
             if definition.adapter == "funding_tenders"
-            else TedSearchAdapter(transport=transport)
+            else TedSearchAdapter(transport=ted_transport)
             if definition.adapter == "ted_search"
             else Portugal2030AnnualPlanAdapter(transport=binary_transport or _get_binary)
             if definition.adapter == "portugal2030_annual_plan_xlsx"
