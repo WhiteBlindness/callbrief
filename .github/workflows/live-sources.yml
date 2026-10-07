@@ -2,12 +2,6 @@ name: Live source verification
 
 on:
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Branch, tag, or commit SHA to verify
-        required: true
-        default: main
-        type: string
 
 permissions:
   contents: read
@@ -17,10 +11,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - name: Check out selected ref
+      - name: Check out selected branch
         uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref }}
+          ref: ${{ github.ref }}
           persist-credentials: false
 
       - uses: actions/setup-python@v5
@@ -48,7 +42,7 @@ jobs:
         if: always()
         env:
           LIVE_CORPUS_PATH: ${{ runner.temp }}/callbrief-live-corpus.json
-          TARGET_REF: ${{ inputs.ref }}
+          TARGET_REF: ${{ github.ref }}
           TARGET_SHA: ${{ steps.target.outputs.sha }}
         run: |
           python - <<'PY'
