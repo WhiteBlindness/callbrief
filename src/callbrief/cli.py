@@ -487,9 +487,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
     for record in live_records:
         for item in record.get("evidence", []):
             provenance_status = str(item.get("provenance_status", "unknown"))
-            provenance_counts[provenance_status] = (
-                provenance_counts.get(provenance_status, 0) + 1
-            )
+            provenance_counts[provenance_status] = provenance_counts.get(provenance_status, 0) + 1
     report: dict[str, Any] = {
         "checked_at": datetime.now(UTC).isoformat(),
         "active_sources": len(definitions),
