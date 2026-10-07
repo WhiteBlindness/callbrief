@@ -4,7 +4,7 @@
 
 CallBrief reúne avisos públicos, conserva a origem de cada facto e compara oportunidades com perfis separados de clientes. Esta versão demonstra um protótipo local com dados reais consultados em páginas oficiais, recuperação lexical, normalização explicável e armazenamento SQLite.
 
-**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra abaixo foi transcrita manualmente de páginas oficiais e não foi recolhida pelos adaptadores. A verificação final da aquisição em direto aguarda nova execução com a consulta corrigida à Funding & Tenders.
+**Estado:** protótipo local em desenvolvimento. O registo tem quatro adaptadores oficiais ativos: a API Funding & Tenders, a API TED para contratação pública, a lista LIFE da CINEA e o XLSX do Plano Anual de Avisos Portugal 2030, que só fornece previsões. A amostra avaliada de 30 oportunidades foi transcrita manualmente e mantém-se separada do corpus recolhido em direto. A [execução manual de 07/10/2026](https://github.com/WhiteBlindness/callbrief/actions/runs/37700599804) passou nos quatro adaptadores e gerou 67 registos; só publicou um resumo compacto, sem os corpos das respostas.
 
 ## O que demonstra
 
@@ -152,7 +152,8 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | Medida | Resultado | Leitura |
 | --- | ---: | --- |
 | Adaptadores oficiais ativos no catálogo | 4 | Funding & Tenders, TED, CINEA e Plano Anual Portugal 2030; o Plano Anual só contém previsões |
-| Verificação de fontes em direto | Pendente | O fluxo manual exige resposta, esquema, paginação e registos válidos em pelo menos três dos quatro percursos; o resultado da consulta corrigida à Funding & Tenders ainda está por medir |
+| Verificação de fontes em direto | 4/4 aprovado | HTTP 200, esquema válido e registos aceites nas quatro fontes; o fluxo manual exige pelo menos três percursos válidos ([execução](https://github.com/WhiteBlindness/callbrief/actions/runs/37700599804)) |
+| Corpus recolhido em direto | 67 | 20 Funding & Tenders, 20 TED, 20 do Plano Anual e 7 CINEA; 489 evidências `LIVE_SOURCE_VERIFIED`; os corpos das respostas não foram guardados nem enviados como artefacto |
 | Registos reais na amostra manual | 30 | 10 COMPETE, 15 Funding & Tenders e 5 CINEA |
 | Consultas de recuperação | 59 | 47 com resposta relevante e 12 sem resposta, divididas entre desenvolvimento e validação |
 | *Recall@5*, referência e pesquisa atual | 0,912 e 0,912 | Nas 34 consultas respondíveis de validação; não há melhoria de ordenação medida |
@@ -163,11 +164,12 @@ O relatório reproduzível é gerado por `python -m evals.real_corpus_benchmark`
 | Citações estruturais | 185/185 excertos estruturados, 1,00 | Os 30 registos são transcritos manualmente e não têm hash das respostas originais |
 | Evidência da condição da prorrogação | 1/1 excerto ligado à oportunidade | PDF e localização preservados no registo manual; não há captura nem hash original |
 | Deduplicação, pares rotulados | Precisão e sensibilidade 1,00 | Cinco pares CINEA/Funding & Tenders correspondem por referência e ligação canónica; dez negativos do corpus e um caso anual controlado não são unidos |
+| Deduplicação na recolha em direto | 0/140 correspondências | Comparação limitada entre 7 registos CINEA e 20 Funding & Tenders; todos os pares ficaram sem correspondência |
 | Elegibilidade no exemplo de vários clientes | Elegível, 2 inelegíveis e incerto | Entidade privada na RAM; entidade pública na RAM; entidade privada no Alentejo; perfil sem região. As regras citam beneficiário e NUTS II; não há exemplo remediável sustentado |
 
 As medidas de normalização, recuperação, citação e deduplicação não foram validadas por uma segunda pessoa. O desempenho de ordenação da pesquisa atual é igual ao da referência neste conjunto. A abstenção recupera cinco das seis consultas sem resposta, mas também recusa algumas consultas respondíveis. O conjunto de validação é pequeno e os resultados não medem qualidade em produção. A elegibilidade demonstra apenas os campos de tipo de beneficiário e região publicados no Plano Anual; o plano contém previsões e não confirma avisos abertos.
 
-Na avaliação de deduplicação, os campos CINEA são transcritos das páginas oficiais e o lado Funding & Tenders é um registo de formato API criado a partir da ligação canónica. Não é uma resposta da API capturada em direto. O teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial; a avaliação dos duplicados obtidos em direto continua pendente.
+Na avaliação de deduplicação rotulada, os campos CINEA são transcritos das páginas oficiais e o lado Funding & Tenders é um registo de formato API criado a partir da ligação canónica. Não é uma resposta da API capturada em direto. O teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial. A última recolha comparou 140 pares entre as primeiras páginas das fontes CINEA e Funding & Tenders e não encontrou correspondências; esta comparação não mede os cinco pares rotulados.
 
 O conjunto sintético `evals/corpus/scenarios.json` continua a testar elegibilidade, fontes contraditórias, duplicados, alterações, recuperação, conteúdo malicioso e isolamento. Esses cenários não se confundem com os avisos reais. A suite local confirma os comportamentos cobertos pelos testes; não mede isolamento ou qualidade num serviço alojado.
 
@@ -192,7 +194,8 @@ O CI está configurado para Python 3.12, 3.13 e 3.14, além de formatação, an�
 
 ## Limites desta versão
 
-- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes. A verificação final da aquisição em direto ainda está pendente; os resultados desse fluxo não se confundem com a amostra rotulada.
+- A amostra de 30 registos foi compilada manualmente, não recolhida pelos adaptadores, e não inclui corpos de resposta originais nem os respetivos hashes. A recolha em direto cria um corpus separado em memória e publica apenas um resumo compacto; os dados de uma execução não se confundem com a amostra rotulada.
+- Na última recolha, os registos Funding & Tenders não tinham um URL canónico de detalhe. O adaptador conserva a origem da API e os identificadores oficiais, deixa o URL canónico por preencher e não constrói um URL a partir do identificador.
 - A licença e as condições de reutilização comercial dos dados devolvidos pela API Funding & Tenders precisam de confirmação específica.
 - A recolha dos avisos formalmente abertos do Portugal 2030 e do COMPETE aguarda uma fonte estruturada autorizada ou esclarecimento de reutilização. O adaptador do Plano Anual serve apenas previsões e mantém a redistribuição comercial desativada.
 - Agent-Reach tem testes de contrato com serviço falso; a ligação local real não foi executada e não está disponível no ambiente de nuvem.
