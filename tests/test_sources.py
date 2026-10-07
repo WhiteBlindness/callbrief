@@ -299,6 +299,78 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(opportunity.call_id, tender_id)
         self.assertEqual(opportunity.opportunity_type.value, "tender")
 
+    def test_funding_tenders_maps_current_search_api_metadata_shape(self) -> None:
+        topic_id = "HORIZON-CL4-2026-01"
+        topic_url = (
+            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/"
+            f"opportunities/topic-details/{topic_id}"
+        )
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "reference": "search-record-1",
+                    "metadata": {
+                        "title": ["Digital technologies for industry"],
+                        "callIdentifier": [topic_id],
+                        "frameworkProgramme": ["Horizon Europe"],
+                        "status": ["31094502"],
+                        "startDate": ["2026-08-01"],
+                        "deadlineDate": ["2026-12-31"],
+                        "type": ["1"],
+                        "url": [topic_url],
+                    },
+                }
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(result.rows_received, 1)
+        self.assertEqual(len(result.documents), 1)
+        self.assertEqual(result.rejected_rows, 0)
+        opportunity = normalize_source_document(result.documents[0])
+        self.assertEqual(opportunity.call_id, topic_id)
+        self.assertEqual(opportunity.topic_id, topic_id)
+        self.assertEqual(opportunity.programme, "Horizon Europe")
+        self.assertEqual(opportunity.status.value, "open")
+        self.assertEqual(opportunity.opening_date, datetime(2026, 8, 1, tzinfo=UTC))
+        self.assertEqual(opportunity.deadline, datetime(2026, 12, 31, tzinfo=UTC))
+        self.assertEqual(opportunity.canonical_url, topic_url)
+        self.assertEqual(opportunity.opportunity_type.value, "grant")
+        sections = {evidence.section for evidence in opportunity.evidence}
+        self.assertTrue(
+            {
+                "metadata.callIdentifier",
+                "metadata.frameworkProgramme",
+                "metadata.deadlineDate",
+                "metadata.url",
+            }.issubset(sections)
+        )
+
+    def test_funding_tenders_rejects_metadata_url_for_a_different_topic(self) -> None:
+        response = {
+            "totalResults": 1,
+            "results": [
+                {
+                    "metadata": {
+                        "title": ["Digital technologies for industry"],
+                        "callIdentifier": ["HORIZON-CL4-2026-01"],
+                        "url": [
+                            "https://ec.europa.eu/info/funding-tenders/opportunities/portal/"
+                            "screen/opportunities/topic-details/HORIZON-CL4-2026-02"
+                        ],
+                    },
+                }
+            ],
+        }
+
+        result = FundingTendersAdapter(transport=lambda *_: response).fetch_with_report(limit=1)
+
+        self.assertEqual(result.documents, ())
+        self.assertEqual(result.rejected_rows, 1)
+        self.assertEqual(result.rejection_reasons, (("details_identifier_mismatch", 1),))
+
     def test_funding_tenders_rejects_records_without_a_supported_title(self) -> None:
         response = {
             "totalResults": 1,

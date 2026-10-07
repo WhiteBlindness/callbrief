@@ -1346,9 +1346,12 @@ def _ted_title(record: Mapping[str, object]) -> tuple[str, str] | None:
     return None
 
 
-def _funding_tenders_details_url(record: Mapping[str, object]) -> str | None:
+def _funding_tenders_details_urls(record: Mapping[str, object]) -> tuple[str, ...]:
+    valid_urls: list[str] = []
     for name in (
         "metadata.esIN_detailsUrl",
+        "metadata.url",
+        "metadata.links",
         "url",
         "webUrl",
         "topicUrl",
@@ -1356,30 +1359,37 @@ def _funding_tenders_details_url(record: Mapping[str, object]) -> str | None:
         "urlEN",
         "permalink",
     ):
-        value = record.get(name)
-        if not isinstance(value, str) or not value.startswith("https://"):
+        raw_value = record.get(name)
+        if isinstance(raw_value, str):
+            values = (raw_value,)
+        elif isinstance(raw_value, list):
+            values = tuple(raw_value[:16])
+        else:
             continue
-        parsed = urlparse(value)
-        try:
-            port = parsed.port
-        except ValueError:
-            continue
-        path = parsed.path.casefold().rstrip("/")
-        if (
-            parsed.scheme == "https"
-            and parsed.hostname
-            and parsed.hostname.casefold().rstrip(".") == "ec.europa.eu"
-            and parsed.username is None
-            and parsed.password is None
-            and port in {None, 443}
-            and re.fullmatch(
-                r"/info/funding-tenders/opportunities/portal/screen/opportunities/"
-                r"(?:topic|tender)-details/[^/]+",
-                path,
-            )
-        ):
-            return value
-    return None
+        for value in values:
+            if not isinstance(value, str) or not value.startswith("https://"):
+                continue
+            parsed = urlparse(value)
+            try:
+                port = parsed.port
+            except ValueError:
+                continue
+            path = parsed.path.casefold().rstrip("/")
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname
+                and parsed.hostname.casefold().rstrip(".") == "ec.europa.eu"
+                and parsed.username is None
+                and parsed.password is None
+                and port in {None, 443}
+                and re.fullmatch(
+                    r"/info/funding-tenders/opportunities/portal/screen/opportunities/"
+                    r"(?:topic|tender)-details/[^/]+",
+                    path,
+                )
+            ):
+                valid_urls.append(value)
+    return tuple(dict.fromkeys(valid_urls))
 
 
 def _funding_tenders_url_identifier(url: str) -> str | None:
@@ -1458,6 +1468,16 @@ def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
         "title",
         "status",
         "startDate",
+        "deadlineDate",
+        "frameworkProgramme",
+        "callIdentifier",
+        "identifier",
+        "topicCode",
+        "topicId",
+        "callId",
+        "url",
+        "links",
+        "type",
         "esDA_endDate",
         "esST_programmes",
         "esIN_detailsUrl",
@@ -1591,6 +1611,11 @@ class FundingTendersAdapter:
                     "callId",
                     "reference",
                     "metadata.REFERENCE",
+                    "metadata.callIdentifier",
+                    "metadata.identifier",
+                    "metadata.topicCode",
+                    "metadata.topicId",
+                    "metadata.callId",
                 ),
             )
             if stable_id is None:
@@ -1605,14 +1630,13 @@ class FundingTendersAdapter:
                     rejection_reasons.get("missing_supported_title", 0) + 1
                 )
                 continue
-            details_url = _funding_tenders_details_url(record)
-            if details_url is None:
+            details_urls = _funding_tenders_details_urls(record)
+            if not details_urls:
                 rejected += 1
                 rejection_reasons["missing_canonical_details_url"] = (
                     rejection_reasons.get("missing_canonical_details_url", 0) + 1
                 )
                 continue
-            details_identifier = _funding_tenders_url_identifier(details_url)
             source_identifiers = tuple(
                 value
                 for name in (
@@ -1623,19 +1647,33 @@ class FundingTendersAdapter:
                     "identifier",
                     "reference",
                     "metadata.REFERENCE",
+                    "metadata.callIdentifier",
+                    "metadata.identifier",
+                    "metadata.topicCode",
+                    "metadata.topicId",
+                    "metadata.callId",
                     "id",
                 )
                 if isinstance((value := record.get(name)), str) and value.strip()
             )
-            if details_identifier is None or _identifier_token(details_identifier) not in {
-                _identifier_token(value) for value in source_identifiers
-            }:
+            source_identifier_tokens = {_identifier_token(value) for value in source_identifiers}
+            details_url = next(
+                (
+                    candidate
+                    for candidate in details_urls
+                    if (details_identifier := _funding_tenders_url_identifier(candidate))
+                    is not None
+                    and _identifier_token(details_identifier) in source_identifier_tokens
+                ),
+                None,
+            )
+            if details_url is None:
                 rejected += 1
                 rejection_reasons["details_identifier_mismatch"] = (
                     rejection_reasons.get("details_identifier_mismatch", 0) + 1
                 )
                 continue
-            source_type = _first_text(record, ("type",))
+            source_type = _first_text(record, ("type", "metadata.type"))
             if (
                 source_type is not None
                 and source_type.isdecimal()

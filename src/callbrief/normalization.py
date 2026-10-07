@@ -27,6 +27,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "id",
         "reference",
         "metadata.REFERENCE",
+        "metadata.callIdentifier",
+        "metadata.identifier",
         "topicCode",
         "callIdentifier",
         "identifier",
@@ -45,6 +47,7 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "programmeName",
         "frameworkProgramme",
         "programName",
+        "metadata.frameworkProgramme",
         "metadata.esST_programmes",
         "programa",
         "programa operacional",
@@ -80,6 +83,8 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
     "call_id": (
         "topicCode",
         "callIdentifier",
+        "metadata.callIdentifier",
+        "metadata.identifier",
         "callId",
         "id",
         "id aviso",
@@ -94,7 +99,15 @@ _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
         "notice-identifier",
         "ND",
     ),
-    "topic_id": ("topicCode", "topicId", "topic_id", "topic-code"),
+    "topic_id": (
+        "topicCode",
+        "topicId",
+        "metadata.callIdentifier",
+        "metadata.topicCode",
+        "metadata.topicId",
+        "topic_id",
+        "topic-code",
+    ),
     "consortium_rules": ("consortiumRules", "consortiumRequirements"),
     "project_duration": ("projectDuration", "duration"),
     "source_updated_at": ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
@@ -142,6 +155,7 @@ _OPPORTUNITY_TYPE_ALIASES = (
     "typeName",
     "fundingType",
     "type",
+    "metadata.type",
     "metadata.es_ContentType",
 )
 
@@ -343,6 +357,7 @@ def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStat
             "DD",
             "data fim prevista",
             "data de fim prevista",
+            "metadata.deadlineDate",
             "metadata.esDA_endDate",
         )
         if document.source_id in {"ted_eu_procurement", "cinea_life"} and _has_evidence(
@@ -692,6 +707,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             "data fim prevista",
             "data de fim prevista",
             "metadata.esDA_endDate",
+            "metadata.deadlineDate",
         ),
         ("additionalDeadlines", "submissionDeadlines"),
         ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
@@ -702,6 +718,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         *_DECIMAL_FIELDS.values(),
         (
             "metadata.esIN_detailsUrl",
+            "metadata.url",
             "url",
             "webUrl",
             "topicUrl",
@@ -762,6 +779,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             record,
             (
                 "metadata.esIN_detailsUrl",
+                "metadata.url",
                 "url",
                 "webUrl",
                 "topicUrl",
@@ -793,6 +811,11 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
             "identifier",
             "reference",
             "metadata.REFERENCE",
+            "metadata.callIdentifier",
+            "metadata.identifier",
+            "metadata.topicCode",
+            "metadata.topicId",
+            "metadata.callId",
             "id",
         ):
             identifier = _text(record, (alias,))
@@ -910,6 +933,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "DD",
                     "data fim prevista",
                     "data de fim prevista",
+                    "metadata.deadlineDate",
                     "metadata.esDA_endDate",
                 ),
             )
@@ -924,6 +948,7 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                     "DD",
                     "data fim prevista",
                     "data de fim prevista",
+                    "metadata.deadlineDate",
                     "metadata.esDA_endDate",
                 ),
             )
