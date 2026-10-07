@@ -404,6 +404,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
         source_timestamps: set[str] = set()
         response_schema_fields: set[str] = set()
         record_schema_fields: set[str] = set()
+        record_field_types: set[tuple[str, str]] = set()
         response_field_types: set[tuple[str, str]] = set()
         response_array_lengths: dict[str, int] = {}
         response_boolean_flags: dict[str, bool] = {}
@@ -436,6 +437,7 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 pagination_state = result.pagination_state
                 response_schema_fields.update(result.response_schema_fields)
                 record_schema_fields.update(result.record_schema_fields)
+                record_field_types.update(result.record_field_types)
                 response_field_types.update(result.response_field_types)
                 response_array_lengths.update(result.response_array_lengths)
                 response_boolean_flags.update(result.response_boolean_flags)
@@ -490,6 +492,10 @@ def _source_check_all(args: argparse.Namespace) -> int:
                 "schema_status": schema_status,
                 "response_schema_fields": sorted(response_schema_fields),
                 "record_schema_fields": sorted(record_schema_fields),
+                "record_field_types": [
+                    {"field": name, "type": value_type}
+                    for name, value_type in sorted(record_field_types)
+                ],
                 "response_field_types": [
                     {"field": name, "type": value_type}
                     for name, value_type in sorted(response_field_types)

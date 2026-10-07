@@ -158,6 +158,9 @@ class CliTests(unittest.TestCase):
                     record_schema_fields=("id", "title")
                     if self.source_id == "eu_funding_tenders"
                     else (),
+                    record_field_types=(("content.title", "str"),)
+                    if self.source_id == "eu_funding_tenders"
+                    else (),
                     response_field_types=(("results", "list"), ("totalResults", "int"))
                     if self.source_id == "eu_funding_tenders"
                     else (),
@@ -198,6 +201,9 @@ class CliTests(unittest.TestCase):
         self.assertEqual(funding_report["total_results"], 1)
         self.assertEqual(funding_report["response_schema_fields"], ["results", "totalResults"])
         self.assertEqual(funding_report["record_schema_fields"], ["id", "title"])
+        self.assertEqual(
+            funding_report["record_field_types"], [{"field": "content.title", "type": "str"}]
+        )
         self.assertEqual(
             funding_report["response_field_types"],
             [

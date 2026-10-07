@@ -162,6 +162,7 @@ class SourceAdapterTests(unittest.TestCase):
         self.assertEqual(report.http_status, 200)
         self.assertEqual(report.total_results, 2)
         self.assertEqual(report.pagination_state, "complete")
+        self.assertIn(("content.title", "str"), report.record_field_types)
 
     def test_live_funding_tenders_response_hash_reaches_field_evidence(self) -> None:
         raw_response = json.dumps(FIXTURE_RESPONSE, ensure_ascii=False).encode("utf-8")

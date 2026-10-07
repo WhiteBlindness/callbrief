@@ -92,6 +92,7 @@ class SourceFetchResult:
     rejected_rows: int = 0
     response_schema_fields: tuple[str, ...] = ()
     record_schema_fields: tuple[str, ...] = ()
+    record_field_types: tuple[tuple[str, str], ...] = ()
     response_field_types: tuple[tuple[str, str], ...] = ()
     response_array_lengths: tuple[tuple[str, int], ...] = ()
     response_boolean_flags: tuple[tuple[str, bool], ...] = ()
@@ -328,6 +329,40 @@ def _safe_field_names(records: Iterable[Mapping[str, object]]) -> tuple[str, ...
         if isinstance(name, str)
     }
     return tuple(sorted(name for name in names if name)[:80])
+
+
+def _safe_record_field_types(
+    records: Iterable[Mapping[str, object]],
+) -> tuple[tuple[str, str], ...]:
+    """Return bounded field paths and value types without retaining source values."""
+    field_types: set[tuple[str, str]] = set()
+    for record in records:
+        for key, value in record.items():
+            if not isinstance(key, str):
+                continue
+            safe_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", key)[:64]
+            if not safe_key:
+                continue
+            field_types.add((safe_key, type(value).__name__))
+            if isinstance(value, Mapping):
+                for nested_key, nested_value in value.items():
+                    if not isinstance(nested_key, str):
+                        continue
+                    safe_nested_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", nested_key)[:64]
+                    if safe_nested_key:
+                        field_types.add(
+                            (f"{safe_key}.{safe_nested_key}"[:96], type(nested_value).__name__)
+                        )
+            elif isinstance(value, list) and value and isinstance(value[0], Mapping):
+                for nested_key, nested_value in value[0].items():
+                    if not isinstance(nested_key, str):
+                        continue
+                    safe_nested_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", nested_key)[:64]
+                    if safe_nested_key:
+                        field_types.add(
+                            (f"{safe_key}[].{safe_nested_key}"[:96], type(nested_value).__name__)
+                        )
+    return tuple(sorted(field_types)[:120])
 
 
 def _response_shape(
@@ -1202,10 +1237,12 @@ class FundingTendersAdapter:
         documents: list[SourceDocument] = []
         rejected = 0
         record_field_names: set[str] = set()
+        record_field_types: set[tuple[str, str]] = set()
         rejection_reasons: dict[str, int] = {}
         for row in rows[:limit]:
             record = _flatten_record(row)
             record_field_names.update(_safe_field_names((record,)))
+            record_field_types.update(_safe_record_field_types((record,)))
             title = next(
                 (
                     str(record[key]).strip()
@@ -1281,6 +1318,7 @@ class FundingTendersAdapter:
                 _safe_field_names((response,)) if isinstance(response, Mapping) else ()
             ),
             record_schema_fields=tuple(sorted(record_field_names)),
+            record_field_types=tuple(sorted(record_field_types)[:120]),
             response_field_types=field_types,
             response_array_lengths=array_lengths,
             response_boolean_flags=boolean_flags,
