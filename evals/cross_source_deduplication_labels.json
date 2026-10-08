@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "labeling_note": "The five positive CINEA/ Funding & Tenders pairs are manually checked against official CINEA topic pages and their outbound Funding & Tenders links. The remaining ten pairs are hard negatives from the labelled real corpus. Labels are single-pass and not independently adjudicated.",
+  "positive_pairs": [
+    {
+      "cinea_record_id": "LIFE-2026-SAP-ENV-ENVIRONMENT",
+      "cinea_source_url": "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/standard-action-projects-saps-circular-economy-and-zero-pollution-environment-0_en",
+      "topic_id": "LIFE-2026-SAP-ENV-ENVIRONMENT",
+      "programme_id": "LIFE (2021/2027)",
+      "action": "Standard Action Projects (SAP)",
+      "title": "Standard Action Projects (SAPs) for Circular Economy and Zero Pollution - Environment",
+      "opening_date": "2026-04-21",
+      "deadline": "2026-09-22",
+      "deadline_datetime": "2026-09-22T17:00:00+02:00",
+      "cinea_authority": "European Climate, Infrastructure and Environment Executive Agency",
+      "canonical_authority": "European Commission",
+      "canonical_topic_url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/life-2026-sap-env-environment",
+      "call_document_url": "https://ec.europa.eu/info/funding-tenders/opportunities/docs/2021-2027/life/wp-call/2026/call-fiche_life-2026-sap-env_en.pdf"
+    },
+    {
+      "cinea_record_id": "LIFE-2026-SAP-ENV-GOV",
+      "cinea_source_url": "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/standard-action-projects-saps-environmental-governance-0_en",
+      "topic_id": "LIFE-2026-SAP-ENV-GOV",
+      "programme_id": "LIFE (2021/2027)",
+      "action": "Standard Action Projects (SAP)",
+      "title": "Standard Action Projects (SAPs) for Environmental Governance",
+      "opening_date": "2026-04-21",
+      "deadline": "2026-09-22",
+      "deadline_datetime": "2026-09-22T17:00:00+02:00",
+      "cinea_authority": "European Climate, Infrastructure and Environment Executive Agency",
+      "canonical_authority": "European Commission",
+      "canonical_topic_url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/life-2026-sap-env-gov",
+      "call_document_url": "https://ec.europa.eu/info/funding-tenders/opportunities/docs/2021-2027/life/wp-call/2026/call-fiche_life-2026-sap-env_en.pdf"
+    },
+    {
+      "cinea_record_id": "LIFE-2026-SAP-NAT-GOV",
+      "cinea_source_url": "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/standard-action-projects-saps-nature-and-biodiversity-governance-and-information-0_en",
+      "topic_id": "LIFE-2026-SAP-NAT-GOV",
+      "programme_id": "LIFE (2021/2027)",
+      "action": "Standard Action Projects (SAP)",
+      "title": "Standard Action Projects (SAPs) for nature and biodiversity - Governance and Information",
+      "opening_date": "2026-04-21",
+      "deadline": "2026-09-22",
+      "deadline_datetime": "2026-09-22T17:00:00+02:00",
+      "cinea_authority": "European Climate, Infrastructure and Environment Executive Agency",
+      "canonical_authority": "European Commission",
+      "canonical_topic_url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/life-2026-sap-nat-gov"
+    },
+    {
+      "cinea_record_id": "LIFE-2026-SAP-NAT-NATURE",
+      "cinea_source_url": "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/standard-action-projects-saps-nature-and-biodiversity-nature-1_en",
+      "topic_id": "LIFE-2026-SAP-NAT-NATURE",
+      "programme_id": "LIFE (2021/2027)",
+      "action": "Standard Action Projects (SAP)",
+      "title": "Standard Action Projects (SAPs) for nature and biodiversity - Nature",
+      "opening_date": "2026-04-21",
+      "deadline": "2026-09-22",
+      "deadline_datetime": "2026-09-22T17:00:00+02:00",
+      "cinea_authority": "European Climate, Infrastructure and Environment Executive Agency",
+      "canonical_authority": "European Commission",
+      "canonical_topic_url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/life-2026-sap-nat-nature"
+    },
+    {
+      "cinea_record_id": "LIFE-2026-SAP-CLIMA-GOV",
+      "cinea_source_url": "https://cinea.ec.europa.eu/funding-opportunities/calls-proposals/climate-governance-and-information-0_en",
+      "topic_id": "LIFE-2026-SAP-CLIMA-GOV",
+      "programme_id": "LIFE (2021/2027)",
+      "action": "Standard Action Projects (SAP)",
+      "title": "Climate Governance and Information",
+      "listing_title": "Standard Action Projects (SAPs) Climate Governance and Information",
+      "opening_date": "2026-04-21",
+      "deadline": "2026-09-22",
+      "deadline_datetime": "2026-09-22T17:00:00+02:00",
+      "cinea_authority": "European Climate, Infrastructure and Environment Executive Agency",
+      "canonical_authority": "European Commission",
+      "canonical_topic_url": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/topic-details/life-2026-sap-clima-gov",
+      "call_document_url": "https://ec.europa.eu/info/funding-tenders/opportunities/docs/2021-2027/life/wp-call/2026/call-fiche_life-2026-sap-clima_en.pdf"
+    }
+  ],
+  "negative_pairs": [
+    {"left_id": "LIFE-2026-SAP-ENV-ENVIRONMENT", "right_id": "LIFE-2026-SAP-ENV-GOV", "case": "different_topic_same_call_family"},
+    {"left_id": "LIFE-2026-SAP-ENV-GOV", "right_id": "LIFE-2026-SAP-CLIMA-GOV", "case": "similar_title_different_call"},
+    {"left_id": "LIFE-2026-SAP-NAT-GOV", "right_id": "LIFE-2026-SAP-NAT-NATURE", "case": "different_topic_same_call_family"},
+    {"left_id": "MPr-2026-8", "right_id": "MPr-2026-5", "case": "similar_title_same_programme_different_deadline"},
+    {"left_id": "MPr-2026-4", "right_id": "MPr-2026-7", "case": "same_programme_and_deadline_different_call"},
+    {"left_id": "HORIZON-CL5-2026-10-D6-01", "right_id": "HORIZON-CL5-2026-10-D6-03", "case": "different_topic_same_call_family"},
+    {"left_id": "HORIZON-CL5-2026-10-D6-02", "right_id": "HORIZON-CL5-2026-10-D6-03", "case": "similar_title_different_topic"},
+    {"left_id": "HORIZON-CL5-2026-10-D6-06", "right_id": "HORIZON-CL5-2026-10-D6-10", "case": "different_topic_same_cluster"},
+    {"left_id": "DIGITAL-ECCC-2027-DEPLOY-CYBER-11-AI4SME", "right_id": "DIGITAL-ECCC-2027-DEPLOY-CYBER-11-CYBERAI", "case": "different_topic_same_call_family"},
+    {"left_id": "DIGITAL-ECCC-2027-DEPLOY-CYBER-11-DUALUSE", "right_id": "DIGITAL-ECCC-2027-DEPLOY-CYBER-11-EULEG", "case": "different_topic_same_call_family"}
+  ],
+  "fixture_negative_pairs": [
+    {
+      "case": "recurring_annual_call_new_identifier",
+      "fixture_only": true,
+      "left": {
+        "id": "annual-training-2025",
+        "source_id": "portugal2030_annual_plan",
+        "programme": "Portugal 2030",
+        "call_id": "TRAINING-2025",
+        "title": "Formação empresarial individual",
+        "authority": "Agência para o Desenvolvimento e Coesão, I. P.",
+        "deadline": "2025-12-31"
+      },
+      "right": {
+        "id": "annual-training-2026",
+        "source_id": "portugal2030_annual_plan",
+        "programme": "Portugal 2030",
+        "call_id": "TRAINING-2026",
+        "title": "Formação empresarial individual",
+        "authority": "Agência para o Desenvolvimento e Coesão, I. P.",
+        "deadline": "2026-12-31"
+      }
+    }
+  ],
+  "recurring_annual_call_invariant": {
+    "description": "A recurring annual call with a new year-specific topic identifier remains a different call even when its normalized title is unchanged.",
+    "fixture_only": true,
+    "expected": "none"
+  }
+}

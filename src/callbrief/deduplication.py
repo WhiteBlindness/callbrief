@@ -17,6 +17,7 @@ _TITLE_STOP_WORDS = frozenset(
 
 class DuplicateKind(StrEnum):
     EXACT = "exact"
+    PROBABLE = "probable"
     POSSIBLE = "possible"
     NONE = "none"
 
@@ -52,54 +53,101 @@ def _normalise_url(value: str | None) -> str | None:
     )
 
 
+def _is_funding_topic_url(value: str | None) -> bool:
+    if value is None:
+        return False
+    return "/topic-details/" in value.casefold()
+
+
+def _conflicting_topic_identity(candidate: Opportunity, existing: Opportunity) -> bool:
+    if (
+        _is_funding_topic_url(candidate.canonical_url)
+        and _is_funding_topic_url(existing.canonical_url)
+        and _normalise_url(candidate.canonical_url) != _normalise_url(existing.canonical_url)
+    ):
+        return True
+    if candidate.topic_id and existing.topic_id:
+        if _normalise_text(candidate.topic_id) != _normalise_text(existing.topic_id):
+            return True
+    return False
+
+
 def _strong_match(candidate: Opportunity, existing: Opportunity) -> tuple[str, ...]:
-    if candidate.call_id and existing.call_id:
+    if _conflicting_topic_identity(candidate, existing):
+        return ()
+    same_topic_id = (
+        candidate.topic_id is not None
+        and existing.topic_id is not None
+        and _normalise_text(candidate.topic_id) == _normalise_text(existing.topic_id)
+    )
+    if not same_topic_id and candidate.call_id and existing.call_id:
         if _normalise_text(candidate.call_id) != _normalise_text(existing.call_id):
             return ()
     matches: list[str] = []
     if _normalise_url(candidate.canonical_url) == _normalise_url(existing.canonical_url):
         if candidate.canonical_url is not None:
             matches.append("canonical_url")
-    if candidate.call_id and existing.call_id:
-        same_programme = (
-            candidate.programme is not None
-            and existing.programme is not None
-            and _normalise_text(candidate.programme) == _normalise_text(existing.programme)
-        )
-        same_call = _normalise_text(candidate.call_id) == _normalise_text(existing.call_id)
-        if same_programme and same_call:
-            matches.append("call_id")
+    if same_topic_id:
+        matches.append("topic_id")
     return tuple(matches)
 
 
-def _possible_match(candidate: Opportunity, existing: Opportunity) -> bool:
+def _review_match(
+    candidate: Opportunity, existing: Opportunity
+) -> tuple[DuplicateKind, tuple[str, ...]] | None:
+    if _conflicting_topic_identity(candidate, existing):
+        return None
     if any(
         value is None
         for value in (
             candidate.programme,
             existing.programme,
-            candidate.authority,
-            existing.authority,
             candidate.title,
             existing.title,
         )
     ):
-        return False
+        return None
     if candidate.call_id and existing.call_id:
         if _normalise_text(candidate.call_id) != _normalise_text(existing.call_id):
-            return False
+            return None
     if _normalise_text(candidate.programme) != _normalise_text(existing.programme):
-        return False
-    if _normalise_text(candidate.authority) != _normalise_text(existing.authority):
-        return False
+        return None
     if candidate.deadline and existing.deadline and candidate.deadline != existing.deadline:
-        return False
+        return None
+    if candidate.opening_date and existing.opening_date:
+        if candidate.opening_date != existing.opening_date:
+            return None
     left = set(_normalise_text(candidate.title).split()) - _TITLE_STOP_WORDS
     right = set(_normalise_text(existing.title).split()) - _TITLE_STOP_WORDS
     if not left or not right:
-        return False
+        return None
     overlap = len(left & right) / len(left | right)
-    return overlap >= 0.8
+    if overlap < 0.8:
+        return None
+    known_canonical_relationship = (
+        candidate.source_family is not None
+        and candidate.source_family == existing.source_family
+        and (
+            candidate.canonical_source == existing.source_id
+            or existing.canonical_source == candidate.source_id
+        )
+    )
+    same_authority = (
+        candidate.authority is not None
+        and existing.authority is not None
+        and _normalise_text(candidate.authority) == _normalise_text(existing.authority)
+    )
+    if not known_canonical_relationship and not same_authority:
+        return None
+    context: list[str] = ["programme", "normalized_title_context"]
+    if candidate.deadline and existing.deadline:
+        context.append("deadline")
+    if candidate.opening_date and existing.opening_date:
+        context.append("opening_date")
+    if known_canonical_relationship:
+        context.append("known_source_relationship")
+        return DuplicateKind.PROBABLE, tuple(context)
+    return DuplicateKind.POSSIBLE, tuple(context)
 
 
 def find_duplicate(
@@ -112,7 +160,21 @@ def find_duplicate(
         matched_by = _strong_match(candidate, existing)
         if matched_by:
             return DuplicateResult(DuplicateKind.EXACT, existing.id, matched_by)
-    possible = tuple(item for item in ordered if _possible_match(candidate, item))
+    review_matches = tuple((item, _review_match(candidate, item)) for item in ordered)
+    probable = tuple(
+        (item, match)
+        for item, match in review_matches
+        if match is not None and match[0] is DuplicateKind.PROBABLE
+    )
+    if probable:
+        _, (kind, matched_by) = probable[0]
+        return DuplicateResult(kind, None, matched_by)
+    possible = tuple(
+        (item, match)
+        for item, match in review_matches
+        if match is not None and match[0] is DuplicateKind.POSSIBLE
+    )
     if possible:
-        return DuplicateResult(DuplicateKind.POSSIBLE, None, ("normalized_title_context",))
+        _, (kind, matched_by) = possible[0]
+        return DuplicateResult(kind, None, matched_by)
     return DuplicateResult(DuplicateKind.NONE, None, ())

@@ -9,6 +9,7 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,15 @@ class CorpusError(ValueError):
     """Raised when a document corpus is missing or unsafe to process."""
 
 
+class RetrievalStatus(StrEnum):
+    SUPPORTED = "supported"
+    NO_SUPPORTED_RESULT = "no_supported_result"
+
+
+DEFAULT_MIN_CONFIDENCE = 0.290165
+DEFAULT_MIN_TERM_COVERAGE = 0.0
+
+
 @dataclass(frozen=True, slots=True)
 class Evidence:
     evidence_id: str
@@ -42,6 +52,8 @@ class Evidence:
     source_hash: str
     retrieved_at: datetime
     section: str | None
+    rank_score: float = 0.0
+    term_coverage: float = 0.0
 
     def __post_init__(self) -> None:
         if self.start < 0 or self.end - self.start != len(self.excerpt):
@@ -50,6 +62,22 @@ class Evidence:
             raise ValueError("Evidence retrieval time must include a timezone")
         if not re.fullmatch(r"[0-9a-f]{64}", self.source_hash):
             raise ValueError("Evidence source_hash must be a SHA-256 digest")
+        if not math.isfinite(self.rank_score) or self.rank_score < 0:
+            raise ValueError("Evidence rank_score must be finite and non-negative")
+        if not math.isfinite(self.term_coverage) or not 0 <= self.term_coverage <= 1:
+            raise ValueError("Evidence term_coverage must be between zero and one")
+
+
+@dataclass(frozen=True, slots=True)
+class RetrievalDecision:
+    status: RetrievalStatus
+    confidence: float
+    evidence: tuple[Evidence, ...]
+    reason: str
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.confidence) or not 0 <= self.confidence <= 1:
+            raise ValueError("Retrieval confidence must be between zero and one")
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,30 +97,76 @@ class _Document:
     paragraphs: tuple[_Paragraph, ...]
 
 
-_SYNONYMS = {
-    "pme": "sme",
-    "sme": "pme",
-    "investigacao": "research",
-    "research": "investigacao",
-    "desenvolvimento": "development",
-    "development": "desenvolvimento",
-    "inovacao": "innovation",
-    "innovation": "inovacao",
-    "financiamento": "funding",
-    "funding": "financiamento",
+_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "pme": ("sme", "smes"),
+    "sme": ("pme", "smes"),
+    "investigacao": ("research",),
+    "research": ("investigacao",),
+    "desenvolvimento": ("development",),
+    "development": ("desenvolvimento",),
+    "inovacao": ("innovation",),
+    "innovation": ("inovacao",),
+    "financiamento": ("funding",),
+    "funding": ("financiamento",),
+    "prazo": ("deadline",),
+    "deadline": ("prazo",),
+    "apoio": ("funding", "support"),
+    "poluicao": ("pollution",),
+    "residuos": ("waste",),
+    "veiculo": ("vehicle",),
+    "veiculos": ("vehicle", "vehicles"),
+    "autonomo": ("autonomous", "automated", "ccam"),
+    "autonomos": ("autonomous", "automated", "ccam"),
+    "conectado": ("connected", "ccam"),
+    "conectados": ("connected", "ccam"),
+    "demonstracao": ("demonstration",),
+    "demonstracoes": ("demonstrations", "demonstration"),
+    "testar": ("demonstrations", "demonstration"),
+    "ciberseguranca": ("cybersecurity",),
+    "protecao": ("security",),
+    "preparacao": ("preparedness",),
+    "incidentes": ("incidents",),
+    "mercadorias": ("freight", "goods"),
+    "passageiros": ("passenger",),
+    "transporte": ("transport",),
+    "transportes": ("transport",),
+    "parceria": ("partnership",),
+    "parcerias": ("partnerships", "partnership"),
+    "circulacao": ("mobility", "transport"),
+    "mobilidade": ("mobility",),
+    "cientifico": ("scientific",),
+    "scientific": ("cientifico",),
+    "conhecimento": ("knowledge",),
+    "knowledge": ("conhecimento",),
+    "tecnologico": ("technological",),
+    "technological": ("tecnologico",),
+    "tecnologia": ("technology",),
+    "technology": ("tecnologia", "tecnologico"),
+    "transferencia": ("transfer",),
+    "transfer": ("transferencia",),
+    "companies": ("empresas", "empresa"),
+    "empresas": ("companies", "businesses", "company"),
+    "biodiversidade": ("biodiversity",),
+    "biodiversity": ("biodiversidade",),
+    "habitats": ("habitat",),
+    "awareness": ("information",),
+    "participation": ("governance",),
+    "politica": ("policy",),
+    "policy": ("politica",),
 }
 
 
 def _normalise(text: str) -> str:
     folded = text.casefold()
     folded = re.sub(
-        r"\b(?:pequenas?\s+e\s+m[eé]dias?\s+(?:empresas|dimens[aã]o)|small\s+and\s+medium\s+enterprises)\b",
+        r"\b(?:pequenas?\s+e\s+m[eé]dias?\s+(?:empresas|dimens[aã]o)|small\s+and\s+medium\s+(?:enterprises|businesses|companies))\b",
         " PME ",
         folded,
     )
     expanded = re.sub(r"\b(?:i|r)\s*(?:&|\+|e)\s*d\b", "investigacao desenvolvimento", folded)
     decomposed = unicodedata.normalize("NFKD", expanded)
     plain = "".join(char for char in decomposed if not unicodedata.combining(char))
+    plain = re.sub(r"\b(?:artificial intelligence|inteligencia artificial)\b", " ai ", plain)
     return " ".join(_TOKEN.findall(plain))
 
 
@@ -216,12 +290,12 @@ class Corpus:
             raise CorpusError("max_results must be between 1 and 12")
         raw_terms = tuple(term for term in _normalise(query).split() if term not in _STOP_WORDS)
         expanded_terms = set(raw_terms)
-        expanded_terms.update(_SYNONYMS[term] for term in raw_terms if term in _SYNONYMS)
+        expanded_terms.update(synonym for term in raw_terms for synonym in _SYNONYMS.get(term, ()))
         terms = tuple(sorted(expanded_terms))
         if not terms:
             raise CorpusError("Search query does not contain searchable terms")
 
-        rows: list[tuple[float, _Document, _Paragraph]] = []
+        rows: list[tuple[float, float, _Document, _Paragraph]] = []
         document_frequency = {term: 0 for term in set(terms)}
         normalized_paragraphs: list[
             tuple[_Document, _Paragraph, tuple[str, ...], tuple[str, ...]]
@@ -236,6 +310,7 @@ class Corpus:
                     if term in tokens or term in section_tokens:
                         document_frequency[term] += 1
         total = max(1, len(normalized_paragraphs))
+        original_terms = tuple(sorted(set(raw_terms)))
         for document, paragraph, tokens, section_tokens in normalized_paragraphs:
             frequencies = {token: tokens.count(token) for token in set(tokens)}
             score = 0.0
@@ -253,11 +328,17 @@ class Corpus:
                     if term in _normalise(Path(document.source).stem).split():
                         score += inverse_frequency * 0.5
             if score:
-                rows.append((score, document, paragraph))
-        rows.sort(key=lambda item: (-item[0], item[1].source.casefold(), item[2].line))
+                matched = set(tokens) | set(section_tokens)
+                coverage = sum(
+                    term in matched
+                    or any(synonym in matched for synonym in _SYNONYMS.get(term, ()))
+                    for term in original_terms
+                ) / len(original_terms)
+                rows.append((score, coverage, document, paragraph))
+        rows.sort(key=lambda item: (-item[0], item[2].source.casefold(), item[3].line))
 
         results: list[Evidence] = []
-        for _, document, paragraph in rows[:max_results]:
+        for score, coverage, document, paragraph in rows[:max_results]:
             matching_positions = [
                 match.start()
                 for match in _TOKEN.finditer(document.text, paragraph.start, paragraph.end)
@@ -288,7 +369,51 @@ class Corpus:
                     source_hash=document.source_hash,
                     retrieved_at=document.retrieved_at,
                     section=paragraph.section,
+                    rank_score=score,
+                    term_coverage=coverage,
                 )
             )
         logger.info("corpus_search", extra={"event": "corpus_search", "result_count": len(results)})
         return tuple(results)
+
+    def search_decision(
+        self,
+        query: str,
+        max_results: int = 6,
+        *,
+        min_confidence: float = DEFAULT_MIN_CONFIDENCE,
+        min_term_coverage: float = DEFAULT_MIN_TERM_COVERAGE,
+    ) -> RetrievalDecision:
+        """Return evidence only when a deterministic coverage rule supports the query."""
+        for value, name in (
+            (min_confidence, "min_confidence"),
+            (min_term_coverage, "min_term_coverage"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise CorpusError(f"{name} must be a number between zero and one")
+            if not math.isfinite(value) or not 0 <= value <= 1:
+                raise CorpusError(f"{name} must be a number between zero and one")
+        ranked = self.search(query, max_results=max_results)
+        if not ranked:
+            return RetrievalDecision(
+                RetrievalStatus.NO_SUPPORTED_RESULT,
+                0.0,
+                (),
+                "no paragraph contains searchable terms from the query",
+            )
+        best = ranked[0]
+        score_strength = best.rank_score / (best.rank_score + 2.0)
+        confidence = 0.7 * best.term_coverage + 0.3 * score_strength
+        if confidence < min_confidence or best.term_coverage < min_term_coverage:
+            return RetrievalDecision(
+                RetrievalStatus.NO_SUPPORTED_RESULT,
+                confidence,
+                (),
+                "the strongest passage is below the calibrated support threshold",
+            )
+        return RetrievalDecision(
+            RetrievalStatus.SUPPORTED,
+            confidence,
+            ranked,
+            "the strongest passage meets the calibrated score and coverage thresholds",
+        )

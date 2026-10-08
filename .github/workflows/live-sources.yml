@@ -99,6 +99,7 @@ jobs:
               if pagination_state == "more_available":
                   total_results = item.get("total_results")
                   rows_returned = item.get("rows_returned")
+                  # A bounded first page is valid only when truncation is explicit.
                   if (
                       not isinstance(total_results, int)
                       or isinstance(total_results, bool)
@@ -123,10 +124,17 @@ jobs:
           by_status = Counter(str(item.get("status", "unknown")) for item in records)
           status_by_source = defaultdict(Counter)
           provenance = Counter()
+          records_with_evidence = Counter()
+          records_without_evidence = Counter()
           for record in records:
               source_id = str(record.get("source_id", "unknown"))
               status_by_source[source_id][str(record.get("status", "unknown"))] += 1
-              for evidence in record.get("evidence", []):
+              evidence_items = record.get("evidence", [])
+              if evidence_items:
+                  records_with_evidence[source_id] += 1
+              else:
+                  records_without_evidence[source_id] += 1
+              for evidence in evidence_items:
                   provenance[f"{source_id}:{evidence.get('provenance_status', 'unknown')}"] += 1
 
           summary["selected_ref"] = os.environ["TARGET_REF"]
@@ -143,6 +151,8 @@ jobs:
               "status_counts_by_source": rendered_status_by_source,
               "recently_closed": "not exposed as a distinct source field",
               "evidence_provenance_by_source": dict(sorted(provenance.items())),
+              "records_with_evidence_by_source": dict(sorted(records_with_evidence.items())),
+              "records_without_evidence_by_source": dict(sorted(records_without_evidence.items())),
           })
 
           cinea = [
@@ -191,6 +201,39 @@ jobs:
                   "funding_tenders_records": len(tenders),
               }
 
+          deduplication = summary["live_deduplication"]
+          print(
+              json.dumps(
+                  {
+                      "selected_sha": summary["selected_sha"],
+                      "successful_sources": successful,
+                      "active_sources": len(sources),
+                      "live_corpus": {
+                          "records_acquired": len(records),
+                          "records_by_source": summary["live_corpus"]["records_by_source"],
+                          "status_counts": summary["live_corpus"]["status_counts"],
+                          "records_with_evidence_by_source": summary["live_corpus"][
+                              "records_with_evidence_by_source"
+                          ],
+                          "records_without_evidence_by_source": summary["live_corpus"][
+                              "records_without_evidence_by_source"
+                          ],
+                      },
+                      "live_deduplication": {
+                          "state": deduplication["state"],
+                          "pairs_compared": deduplication.get("pairs_compared", 0),
+                          "results": deduplication.get("results", {}),
+                          "exact_match_count": len(deduplication.get("exact_matches", [])),
+                          "review_candidate_count": len(
+                              deduplication.get("review_candidates", [])
+                          ),
+                      },
+                  },
+                  ensure_ascii=False,
+                  sort_keys=True,
+              )
+          )
+
           summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
           lines = [
@@ -201,13 +244,23 @@ jobs:
               f"Successful active sources: **{successful}/{len(sources)}**; required: **at least 3**.",
               f"Live records: **{len(records)}**; status counts: `{dict(sorted(by_status.items()))}`.",
               f"Records by source: `{dict(sorted(by_source.items()))}`; status by source: `{rendered_status_by_source}`.",
+              f"Record quality by source: `{summary['live_corpus'].get('record_quality_by_source', {})}`.",
               "",
-              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Error code | Payload SHA / provenance | Source timestamp | Elapsed ms | Gate |",
-              "|---|---:|---:|---:|---:|---|---|---|---|---|---:|---|",
+              "| Source | HTTP | Bytes | Returned / total | Received / accepted / rejected | Pagination | Schema / parser | Error code | Payload SHA / provenance | Call/topic IDs | Detail URLs | Opportunity types | Source timestamp | Elapsed ms | Gate |",
+              "|---|---:|---:|---:|---:|---|---|---|---|---:|---:|---|---|---:|---|",
           ]
           for item in sources:
+              source_id = str(item.get('source_id', 'unknown'))
+              quality_source_id = 'cinea_life' if source_id == 'cinea' else source_id
+              quality = summary['live_corpus'].get('record_quality_by_source', {}).get(
+                  quality_source_id, {}
+              )
+              call_topic_ids = quality.get('records_with_official_call_or_topic_id', 0)
+              topic_urls = quality.get('records_with_canonical_topic_url', 0)
+              tender_urls = quality.get('records_with_canonical_tender_url', 0)
+              opportunity_types = quality.get('opportunity_type_counts', {})
               lines.append(
-                  f"| {item.get('source_id')} | {item.get('http_status') or 'failed'} | "
+                  f"| {source_id} | {item.get('http_status') or 'failed'} | "
                   f"{item.get('response_bytes')} | {item.get('rows_returned')} / "
                   f"{item.get('total_results')} | {item.get('rows_received')} / "
                   f"{item.get('rows_accepted')} / {item.get('rows_rejected')} | "
@@ -215,6 +268,7 @@ jobs:
                   f"{item.get('parser_result')} | {item.get('error_code') or ''} | "
                   f"`{item.get('source_payload_sha256') or []}` / "
                   f"{item.get('response_provenance_status') or ''} | "
+                  f"{call_topic_ids} | {topic_urls} topic / {tender_urls} tender | `{opportunity_types}` | "
                   f"{item.get('source_timestamp')} | "
                   f"{item.get('elapsed_ms')} | {'pass' if item.get('workflow_gate_success') else 'fail'} |"
               )

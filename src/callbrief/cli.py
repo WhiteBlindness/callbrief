@@ -5,19 +5,23 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import sqlite3
 import sys
 from dataclasses import asdict, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from email.utils import parsedate_to_datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any
 
 from .agent import AgentError, AgentRunner
 from .corpus import Corpus, CorpusError
-from .domain import FitSignals, OpportunityType, OrganisationProfile
+from .domain import EvidenceProvenance, FitSignals, OpportunityType, OrganisationProfile
 from .eligibility import assess_eligibility
 from .filtering import FilterState, OpportunityFilter, filter_opportunity
+from .normalization import normalize_source_document
 from .pipeline import run_discovery
 from .provider import OpenAICompatibleClient, ProviderError
 from .report import (
@@ -31,7 +35,12 @@ from .report import (
 )
 from .scoring import FitWeights, score_fit
 from .settings import Settings, SettingsError
-from .sources import SourceError, create_adapter_registry, load_source_registry
+from .sources import (
+    SourceError,
+    SourceFetchResult,
+    create_adapter_registry,
+    load_source_registry,
+)
 from .storage import SqliteStore
 
 
@@ -84,6 +93,22 @@ def _parser() -> argparse.ArgumentParser:
     source_commands = source.add_subparsers(dest="source_command", required=True)
     source_list = source_commands.add_parser("list", help="lista fontes e respetivo estado")
     source_list.add_argument("--registry", type=Path, default=None)
+    source_check = source_commands.add_parser(
+        "check", help="verifica uma fonte ativa sem guardar os registos recebidos"
+    )
+    source_check.add_argument(
+        "source_id",
+        nargs="?",
+        help="identificador declarado no catálogo de fontes",
+    )
+    source_check.add_argument("--all-active", action="store_true")
+    source_check.add_argument("--json", action="store_true", dest="as_json")
+    source_check.add_argument("--summary-path", type=Path, default=None)
+    source_check.add_argument("--live-corpus-path", type=Path, default=None)
+    source_check.add_argument("--query", default="", help="consulta opcional para a fonte")
+    source_check.add_argument(
+        "--limit", type=int, default=20, help="máximo de registos, entre 1 e 100"
+    )
 
     discover = commands.add_parser("discover", help="pesquisa e guarda avisos numa fonte ativa")
     discover.add_argument("--source", required=True, help="identificador de fonte ativa")
@@ -240,8 +265,355 @@ def _source_list(registry_path: Path | None) -> int:
         state = state_labels[item.status]
         address = item.base_url or "URL por verificar"
         cadence = cadence_labels[item.check_cadence]
-        print(f"{item.source_id}\t{state}\t{cadence}\t{address}")
+        redistribution = (
+            "reutilização comercial documentada"
+            if item.commercial_redistribution
+            else "reutilização comercial indisponível"
+        )
+        print(
+            f"{item.source_id}\t{state}\t{cadence}\t{item.legal_status}\t"
+            f"{redistribution}\t{address}"
+        )
     return 0
+
+
+def _source_check(args: argparse.Namespace) -> int:
+    if args.all_active:
+        if args.source_id is not None:
+            raise ValueError("Não indique source_id com --all-active.")
+        if not args.as_json:
+            raise ValueError("--all-active requer --json para evitar saída de conteúdo de origem.")
+        return _source_check_all(args)
+    if args.source_id is None:
+        raise ValueError("Indique source_id ou use --all-active.")
+    if not 1 <= args.limit <= 100:
+        raise ValueError("O limite tem de estar entre 1 e 100.")
+    definition = next(
+        (item for item in load_source_registry() if item.source_id == args.source_id), None
+    )
+    if definition is None:
+        raise ValueError("O identificador não existe no catálogo de fontes.")
+    adapter = create_adapter_registry().get(args.source_id)
+    if adapter is None:
+        print(f"Resultado: não executado; estado da fonte: {definition.status}.")
+        print(f"Política de reutilização: {definition.legal_status}.")
+        print("HTTP: não solicitado; registos: 0; esquema: não verificado.")
+        return 1
+
+    fetch_with_report = getattr(adapter, "fetch_with_report", None)
+    try:
+        if callable(fetch_with_report):
+            result = fetch_with_report(args.query, limit=args.limit)
+        else:
+            documents = adapter.fetch(args.query, limit=args.limit)
+            result = SourceFetchResult(
+                source_id=args.source_id,
+                documents=documents,
+                http_status=200,
+                response_bytes=sum(len(item.text.encode("utf-8")) for item in documents),
+                total_results=None,
+                pagination_state=(
+                    "limit_reached_unknown" if len(documents) == args.limit else "unknown"
+                ),
+                rows_received=len(documents),
+            )
+    except SourceError as exc:
+        status = exc.http_status
+        if status is None:
+            match = re.search(r"HTTP (\d{3})", str(exc))
+            status = int(match.group(1)) if match else None
+        print("Resultado: falhou.")
+        print(f"HTTP: {status if status is not None else 'não disponível'}.")
+        print("Registos: recebidos 0; aceites 0; rejeitados 0.")
+        response_size = (
+            f"{exc.response_bytes} bytes" if exc.response_bytes is not None else "não disponível"
+        )
+        print(f"Tamanho da resposta: {response_size}; esquema: não verificado.")
+        print("Intervalo de datas estruturadas: sem dados estruturados.")
+        print("Última atualização declarada pela fonte: desconhecida.")
+        print("Paginação: não determinada.")
+        print(f"Detalhe: {exc}")
+        return 1
+
+    normalized = []
+    rejected = result.rejected_rows
+    for document in result.documents:
+        try:
+            normalized.append(normalize_source_document(document))
+        except (TypeError, ValueError):
+            rejected += 1
+    valid = len(normalized)
+    schema_state = "válido" if rejected == 0 else "com registos rejeitados"
+    successful_http = 200 <= result.http_status < 300
+    print(f"Resultado: {'OK' if successful_http and rejected == 0 else 'falhou'}.")
+    print(f"HTTP: {result.http_status}.")
+    print(f"Registos: recebidos {result.rows_received}; aceites {valid}; rejeitados {rejected}.")
+    print(f"Tamanho da resposta: {result.response_bytes} bytes; esquema: {schema_state}.")
+    dates = [
+        value.date()
+        for item in normalized
+        for value in (
+            item.publication_date,
+            item.opening_date,
+            item.deadline,
+            item.source_updated_at,
+        )
+        if value is not None
+    ]
+    if dates:
+        print(
+            f"Intervalo de datas estruturadas: {min(dates).strftime('%d/%m/%Y')} a "
+            f"{max(dates).strftime('%d/%m/%Y')}."
+        )
+    else:
+        print("Intervalo de datas estruturadas: sem dados estruturados.")
+    updated = [item.source_updated_at for item in normalized if item.source_updated_at is not None]
+    for document in result.documents:
+        if document.last_modified:
+            try:
+                updated.append(parsedate_to_datetime(document.last_modified))
+            except (TypeError, ValueError, OverflowError):
+                continue
+    if updated:
+        last_updated = max(updated).astimezone(UTC).strftime("%d/%m/%Y %H:%M UTC")
+    else:
+        last_updated = "desconhecida"
+    print(f"Última atualização declarada pela fonte: {last_updated}.")
+    print(f"Paginação: {result.pagination_state}.")
+    return 0 if successful_http and rejected == 0 else 1
+
+
+def _source_check_all(args: argparse.Namespace) -> int:
+    if not 1 <= args.limit <= 100:
+        raise ValueError("O limite tem de estar entre 1 e 100.")
+    definitions = tuple(
+        item
+        for item in load_source_registry()
+        if item.enabled and item.status == "active" and item.adapter is not None
+    )
+    adapters = create_adapter_registry()
+    report_items: list[dict[str, Any]] = []
+    live_records: list[dict[str, Any]] = []
+
+    for definition in definitions:
+        started = perf_counter()
+        adapter = adapters.get(definition.source_id)
+        result: SourceFetchResult | None = None
+        normalized = []
+        parser_error: str | None = None
+        http_status: int | None = None
+        response_bytes: int | None = None
+        rows_received = 0
+        rows_rejected = 0
+        records_without_evidence = 0
+        pagination_state = "not_determined"
+        payload_hashes: set[str] = set()
+        source_timestamps: set[str] = set()
+        response_schema_fields: set[str] = set()
+        record_schema_fields: set[str] = set()
+        record_field_types: set[tuple[str, str]] = set()
+        response_field_types: set[tuple[str, str]] = set()
+        response_array_lengths: dict[str, int] = {}
+        response_boolean_flags: dict[str, bool] = {}
+        rejection_reasons: dict[str, int] = {}
+        response_provenance_status: str | None = None
+        if adapter is None:
+            parser_error = "adapter_not_registered"
+        else:
+            fetch_with_report = getattr(adapter, "fetch_with_report", None)
+            try:
+                if callable(fetch_with_report):
+                    result = fetch_with_report(args.query, limit=args.limit)
+                else:
+                    documents = adapter.fetch(args.query, limit=args.limit)
+                    result = SourceFetchResult(
+                        source_id=definition.source_id,
+                        documents=documents,
+                        http_status=200,
+                        response_bytes=sum(len(item.text.encode("utf-8")) for item in documents),
+                        total_results=None,
+                        pagination_state=(
+                            "limit_reached_unknown" if len(documents) == args.limit else "unknown"
+                        ),
+                        rows_received=len(documents),
+                    )
+                http_status = result.http_status
+                response_bytes = result.response_bytes
+                rows_received = result.rows_received
+                rows_rejected = result.rejected_rows
+                pagination_state = result.pagination_state
+                response_schema_fields.update(result.response_schema_fields)
+                record_schema_fields.update(result.record_schema_fields)
+                record_field_types.update(result.record_field_types)
+                response_field_types.update(result.response_field_types)
+                response_array_lengths.update(result.response_array_lengths)
+                response_boolean_flags.update(result.response_boolean_flags)
+                for reason, count in result.rejection_reasons:
+                    rejection_reasons[reason] = rejection_reasons.get(reason, 0) + count
+                if result.source_payload_sha256:
+                    payload_hashes.add(result.source_payload_sha256)
+                if result.source_timestamp:
+                    source_timestamps.add(result.source_timestamp)
+                if result.response_provenance_status is not None:
+                    response_provenance_status = result.response_provenance_status.value
+                for document in result.documents:
+                    if document.source_payload_sha256:
+                        payload_hashes.add(document.source_payload_sha256)
+                    if document.last_modified:
+                        source_timestamps.add(document.last_modified)
+                    try:
+                        opportunity = normalize_source_document(document)
+                    except (TypeError, ValueError):
+                        rows_rejected += 1
+                        rejection_reasons["normalization_failed"] = (
+                            rejection_reasons.get("normalization_failed", 0) + 1
+                        )
+                        continue
+                    if opportunity.title is None or not opportunity.evidence:
+                        rows_rejected += 1
+                        records_without_evidence += 1
+                        rejection_reasons["missing_evidence"] = (
+                            rejection_reasons.get("missing_evidence", 0) + 1
+                        )
+                        continue
+                    normalized.append(opportunity)
+                    if opportunity.source_updated_at is not None:
+                        source_timestamps.add(opportunity.source_updated_at.isoformat())
+                    live_records.append(asdict(opportunity))
+            except SourceError as exc:
+                http_status = exc.http_status
+                if http_status is None:
+                    status = re.search(r"HTTP (\d{3})", str(exc))
+                    http_status = int(status.group(1)) if status else None
+                response_bytes = exc.response_bytes
+                if exc.source_payload_sha256:
+                    payload_hashes.add(exc.source_payload_sha256)
+                if http_status is not None or exc.source_payload_sha256:
+                    response_provenance_status = EvidenceProvenance.LIVE_SOURCE_VERIFIED.value
+                parser_error = exc.error_code
+
+        successful_http = http_status is not None and 200 <= http_status < 300
+        schema_status = (
+            "invalid" if parser_error is not None else "partial" if rows_rejected else "valid"
+        )
+        parser_result = (
+            "failed" if parser_error is not None else "parsed" if normalized else "valid_empty"
+        )
+        elapsed_ms = round((perf_counter() - started) * 1000, 3)
+        report_items.append(
+            {
+                "source_id": definition.source_id,
+                "http_success": successful_http,
+                "http_status": http_status,
+                "response_bytes": response_bytes,
+                "rows_received": rows_received,
+                "rows_returned": len(result.documents) if result else 0,
+                "total_results": result.total_results if result else None,
+                "rows_accepted": len(normalized),
+                "rows_rejected": rows_rejected,
+                "records_with_evidence": len(normalized),
+                "records_without_evidence": records_without_evidence,
+                "rejection_reasons": dict(sorted(rejection_reasons.items())),
+                "pagination_state": pagination_state,
+                "schema_status": schema_status,
+                "response_schema_fields": sorted(response_schema_fields),
+                "record_schema_fields": sorted(record_schema_fields),
+                "record_field_types": [
+                    {"field": name, "type": value_type}
+                    for name, value_type in sorted(record_field_types)
+                ],
+                "response_field_types": [
+                    {"field": name, "type": value_type}
+                    for name, value_type in sorted(response_field_types)
+                ],
+                "response_array_lengths": dict(sorted(response_array_lengths.items())),
+                "response_boolean_flags": dict(sorted(response_boolean_flags.items())),
+                "response_provenance_status": response_provenance_status,
+                "source_timestamp": next(iter(source_timestamps))
+                if len(source_timestamps) == 1
+                else None,
+                "source_timestamps": sorted(source_timestamps),
+                "source_payload_sha256": sorted(payload_hashes),
+                "parser_result": parser_result,
+                "elapsed_ms": elapsed_ms,
+                "success": successful_http
+                and schema_status == "valid"
+                and parser_result == "parsed",
+                "error_code": parser_error,
+            }
+        )
+
+    all_succeeded = len(report_items) == len(definitions) and all(
+        item["success"] is True for item in report_items
+    )
+    provenance_counts: dict[str, int] = {}
+    for record in live_records:
+        for item in record.get("evidence", []):
+            provenance_status = str(item.get("provenance_status", "unknown"))
+            provenance_counts[provenance_status] = provenance_counts.get(provenance_status, 0) + 1
+    quality_by_source: dict[str, dict[str, Any]] = {}
+    for source_id in sorted({str(record.get("source_id", "unknown")) for record in live_records}):
+        source_records = [record for record in live_records if record.get("source_id") == source_id]
+        opportunity_type_counts: dict[str, int] = {}
+        for record in source_records:
+            opportunity_type = record.get("opportunity_type", OpportunityType.UNKNOWN)
+            value = (
+                opportunity_type.value
+                if isinstance(opportunity_type, OpportunityType)
+                else str(opportunity_type)
+            )
+            opportunity_type_counts[value] = opportunity_type_counts.get(value, 0) + 1
+        quality_by_source[source_id] = {
+            "records_with_call_id": sum(bool(record.get("call_id")) for record in source_records),
+            "records_with_topic_id": sum(bool(record.get("topic_id")) for record in source_records),
+            "records_with_official_call_or_topic_id": sum(
+                bool(record.get("call_id") or record.get("topic_id")) for record in source_records
+            ),
+            "records_with_canonical_topic_url": sum(
+                "/opportunities/topic-details/" in str(record.get("canonical_url") or "").casefold()
+                for record in source_records
+            ),
+            "records_with_canonical_tender_url": sum(
+                "/opportunities/tender-details/"
+                in str(record.get("canonical_url") or "").casefold()
+                for record in source_records
+            ),
+            "opportunity_type_counts": dict(sorted(opportunity_type_counts.items())),
+        }
+    report: dict[str, Any] = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "active_sources": len(definitions),
+        "all_succeeded": all_succeeded,
+        "sources": report_items,
+        "live_corpus": {
+            "records_acquired": len(live_records),
+            "persistence": "optional local file; not uploaded by the workflow",
+            "evidence_provenance_counts": provenance_counts,
+            "record_quality_by_source": quality_by_source,
+        },
+    }
+    rendered = json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n"
+    print(rendered, end="")
+    if args.summary_path is not None:
+        if args.summary_path.is_symlink():
+            raise ValueError("O caminho do resumo não pode ser uma ligação simbólica.")
+        args.summary_path.parent.mkdir(parents=True, exist_ok=True)
+        args.summary_path.write_text(rendered, encoding="utf-8")
+    if args.live_corpus_path is not None:
+        if args.live_corpus_path.is_symlink():
+            raise ValueError("O caminho do corpus não pode ser uma ligação simbólica.")
+        corpus_payload = {
+            "schema_version": 1,
+            "captured_at": report["checked_at"],
+            "dataset": "LIVE CORPUS",
+            "records": live_records,
+        }
+        args.live_corpus_path.parent.mkdir(parents=True, exist_ok=True)
+        args.live_corpus_path.write_text(
+            json.dumps(corpus_payload, ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
+    return 0 if all_succeeded else 1
 
 
 def _discover(args: argparse.Namespace) -> int:
@@ -255,12 +627,15 @@ def _discover(args: argparse.Namespace) -> int:
     print(
         f"Registos recebidos: {len(result.items)}; novas capturas: {result.new_snapshots}; "
         f"duplicados exatos: {result.exact_duplicates}; correspondências para revisão: "
-        f"{result.possible_matches}."
+        f"{result.review_candidates} (prováveis: {result.probable_matches}; "
+        f"possíveis: {result.possible_matches})."
     )
     for item in result.items:
         title = item.opportunity.title or item.opportunity.id
         if item.duplicate.kind.value == "exact":
             suffix = f"variante de {item.duplicate.canonical_opportunity_id}"
+        elif item.duplicate.kind.value == "probable":
+            suffix = "correspondência provável, sem união automática"
         elif item.duplicate.kind.value == "possible":
             suffix = "correspondência possível, sem união automática"
         else:
@@ -451,6 +826,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         if args.command == "source":
+            if args.source_command == "check":
+                return _source_check(args)
             return _source_list(args.registry)
         if args.command == "discover":
             return _discover(args)

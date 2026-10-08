@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 from callbrief.change_tracking import _TRACKED_FIELDS, detect_changes, notification_types
 from callbrief.domain import Opportunity, OpportunityStatus, OpportunityType
+from callbrief.normalization import normalize_source_document
+from callbrief.sources import FundingTendersAdapter
 
 NOW = datetime(2026, 10, 6, tzinfo=UTC)
 
@@ -27,6 +31,28 @@ def _call() -> Opportunity:
 
 
 class ChangeTrackingTests(unittest.TestCase):
+    def test_source_format_snapshots_detect_deadline_status_and_document_changes(self) -> None:
+        fixtures = Path(__file__).parent / "fixtures"
+        before_payload = json.loads(
+            (fixtures / "funding_tenders_snapshot_before.json").read_text("utf-8")
+        )
+        after_payload = json.loads(
+            (fixtures / "funding_tenders_snapshot_after.json").read_text("utf-8")
+        )
+
+        def normalize(payload):
+            document = FundingTendersAdapter(transport=lambda *_: payload).fetch()[0]
+            return normalize_source_document(document)
+
+        before = normalize(before_payload)
+        after = normalize(after_payload)
+        changes = detect_changes(before, after, detected_at=NOW + timedelta(hours=1))
+
+        self.assertEqual(
+            {item.field for item in changes},
+            {"deadline", "status", "documents"},
+        )
+
     def test_each_material_field_is_registered_once(self) -> None:
         self.assertEqual(len(_TRACKED_FIELDS), len(set(_TRACKED_FIELDS)))
         self.assertIn("status", _TRACKED_FIELDS)

@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import UTC, date, datetime
+import unicodedata
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Any
+from urllib.parse import unquote, urlparse
 
 from .domain import (
     EligibilityRule,
@@ -20,21 +22,110 @@ from .domain import (
 )
 
 _FIELD_ALIASES: dict[str, tuple[str, ...]] = {
-    "record_id": ("record_id", "id", "topicCode", "callIdentifier", "identifier"),
-    "programme": ("programme", "programmeName", "frameworkProgramme", "programName"),
-    "title": ("title", "title_en", "titleEN", "name", "subject"),
-    "authority": ("authority", "managingAuthority", "organisation", "organization", "agency"),
-    "call_id": ("topicCode", "callIdentifier", "callId", "identifier"),
+    "record_id": (
+        "record_id",
+        "id",
+        "topicCode",
+        "topicId",
+        "metadata.topicCode",
+        "metadata.topicId",
+        "reference",
+        "metadata.REFERENCE",
+        "metadata.identifier",
+        "callIdentifier",
+        "metadata.callIdentifier",
+        "identifier",
+        "publication-number",
+        "notice-identifier",
+        "código do aviso",
+        "código aviso",
+        "id aviso",
+        "id do aviso",
+        "número aviso",
+        "número do aviso",
+        "ND",
+    ),
+    "programme": (
+        "programme",
+        "programmeName",
+        "frameworkProgramme",
+        "programName",
+        "metadata.frameworkProgramme",
+        "metadata.esST_programmes",
+        "programa",
+        "programa operacional",
+        "programa financiador",
+    ),
+    "title": (
+        "title",
+        "metadata.title",
+        "title_en",
+        "titleEN",
+        "name",
+        "subject",
+        "notice-title",
+        "notice-title.*",
+        "title.*",
+        "TI.*",
+        "designação",
+        "designacao",
+        "designação do aviso",
+        "designacao do aviso",
+        "nome do aviso",
+        "TI",
+    ),
+    "authority": (
+        "authority",
+        "managingAuthority",
+        "organisation",
+        "organization",
+        "agency",
+        "buyer-name",
+        "buyerName",
+    ),
+    "call_id": (
+        "topicCode",
+        "callIdentifier",
+        "metadata.callIdentifier",
+        "metadata.identifier",
+        "callId",
+        "id",
+        "id aviso",
+        "id do aviso",
+        "código aviso",
+        "codigo aviso",
+        "código do aviso",
+        "número aviso",
+        "número do aviso",
+        "identifier",
+        "publication-number",
+        "notice-identifier",
+        "ND",
+    ),
+    "topic_id": (
+        "topicCode",
+        "topicId",
+        "metadata.topicCode",
+        "metadata.topicId",
+        "topic_id",
+        "topic-code",
+    ),
     "consortium_rules": ("consortiumRules", "consortiumRequirements"),
     "project_duration": ("projectDuration", "duration"),
     "source_updated_at": ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
 }
 _LIST_FIELDS: dict[str, tuple[str, ...]] = {
     "geography": ("geography", "countries", "eligibleCountries"),
-    "eligible_applicant_types": ("eligibleApplicantTypes", "applicantTypes", "beneficiaries"),
+    "eligible_applicant_types": (
+        "eligibleApplicantTypes",
+        "applicantTypes",
+        "beneficiaries",
+        "tipo ent. beneficiária",
+        "tipo de entidade beneficiária",
+    ),
     "eligible_company_sizes": ("eligibleCompanySizes", "companySizes"),
     "eligible_sectors": ("eligibleSectors", "sectors"),
-    "eligible_regions": ("eligibleRegions", "regions"),
+    "eligible_regions": ("eligibleRegions", "regions", "NUTS II"),
     "eligible_activities": ("eligibleActivities", "activities"),
     "excluded_activities": ("excludedActivities",),
     "financial_requirements": ("financialRequirements",),
@@ -42,7 +133,15 @@ _LIST_FIELDS: dict[str, tuple[str, ...]] = {
     "documents": ("documents", "documentsToProvide"),
 }
 _DECIMAL_FIELDS: dict[str, tuple[str, ...]] = {
-    "budget_total": ("budgetTotal", "totalBudget", "callBudget"),
+    "budget_total": (
+        "budgetTotal",
+        "totalBudget",
+        "callBudget",
+        "dotação global",
+        "dotação global do aviso",
+        "dotação fundo",
+        "dotação do fundo",
+    ),
     "funding_min": ("fundingMin", "minFunding", "minimumGrant"),
     "funding_max": ("fundingMax", "maxFunding", "maximumGrant"),
     "aid_intensity": ("aidIntensity", "fundingRate", "coFundingRate"),
@@ -53,10 +152,23 @@ _INTEGER_FIELDS: dict[str, tuple[str, ...]] = {
     "trl_min": ("trlMin", "technologyReadinessLevelMin"),
     "trl_max": ("trlMax", "technologyReadinessLevelMax"),
 }
+_OPPORTUNITY_TYPE_ALIASES = (
+    "opportunityType",
+    "typeName",
+    "fundingType",
+    "type",
+    "metadata.type",
+    "metadata.es_ContentType",
+)
 
 
 def _key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", value.casefold())
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(
+        character
+        for character in normalized
+        if character.isalnum() and not unicodedata.combining(character)
+    )
 
 
 def _record(document: SourceDocument) -> dict[str, Any]:
@@ -72,6 +184,20 @@ def _record(document: SourceDocument) -> dict[str, Any]:
 def _lookup(record: dict[str, Any], aliases: tuple[str, ...]) -> tuple[str, Any] | None:
     keyed = {_key(name): (name, value) for name, value in record.items()}
     for alias in aliases:
+        if alias.endswith(".*"):
+            prefix = alias[:-1].casefold()
+            matching = next(
+                (
+                    (name, value)
+                    for name, value in sorted(record.items())
+                    if name.casefold().startswith(prefix)
+                    and isinstance(value, str)
+                    and value.strip()
+                ),
+                None,
+            )
+            if matching is not None:
+                return matching
         found = keyed.get(_key(alias))
         if found is not None:
             return found
@@ -98,6 +224,52 @@ def _date(record: dict[str, Any], aliases: tuple[str, ...]) -> datetime | None:
         return datetime.combine(date.fromisoformat(value), datetime.min.time(), tzinfo=UTC)
     except ValueError:
         pass
+    if re.fullmatch(r"\d{5}(?:\.\d+)?", value.strip()):
+        try:
+            serial = float(value)
+        except ValueError:
+            serial = 0
+        if 20000 <= serial <= 80000:
+            return datetime.combine(
+                date(1899, 12, 30) + timedelta(days=int(serial)),
+                datetime.min.time(),
+                tzinfo=UTC,
+            )
+    try:
+        return datetime.combine(
+            datetime.strptime(value, "%Y%m%d").date(), datetime.min.time(), tzinfo=UTC
+        )
+    except ValueError:
+        pass
+    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", value.strip())
+    if match:
+        try:
+            local_date = date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            return None
+        return datetime.combine(local_date, datetime.min.time(), tzinfo=UTC)
+    match = re.fullmatch(r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", value.strip())
+    if match:
+        month = {
+            "january": 1,
+            "february": 2,
+            "march": 3,
+            "april": 4,
+            "may": 5,
+            "june": 6,
+            "july": 7,
+            "august": 8,
+            "september": 9,
+            "october": 10,
+            "november": 11,
+            "december": 12,
+        }.get(match.group(2).casefold())
+        if month is not None:
+            try:
+                due_date = date(int(match.group(3)), month, int(match.group(1)))
+            except ValueError:
+                return None
+            return datetime.combine(due_date, datetime.min.time(), tzinfo=UTC)
     try:
         parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     except ValueError:
@@ -119,8 +291,16 @@ def _decimal(record: dict[str, Any], aliases: tuple[str, ...]) -> Decimal | None
     found = _lookup(record, aliases)
     if found is None or isinstance(found[1], bool):
         return None
+    value = found[1]
+    if isinstance(value, str):
+        value = value.replace("€", "").replace("\u00a0", " ").strip()
+        value = re.sub(r"\s+", "", value)
+        if "," in value:
+            value = value.replace(".", "").replace(",", ".")
+        elif re.fullmatch(r"\d{1,3}(?:\.\d{3})+", value):
+            value = value.replace(".", "")
     try:
-        result = Decimal(str(found[1]))
+        result = Decimal(str(value))
     except (InvalidOperation, ValueError):
         return None
     return result if result.is_finite() and result >= 0 else None
@@ -136,30 +316,99 @@ def _integer(record: dict[str, Any], aliases: tuple[str, ...]) -> int | None:
 
 def _strings(record: dict[str, Any], aliases: tuple[str, ...]) -> tuple[str, ...] | None:
     found = _lookup(record, aliases)
-    if found is None or not isinstance(found[1], list):
+    if found is None:
         return None
     value = found[1]
-    if not all(isinstance(item, str) and item.strip() for item in value):
+    if isinstance(value, str) and value.strip():
+        parts = tuple(part.strip() for part in re.split(r"[|;\n]+", value) if part.strip())
+        return parts or None
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
         return None
     return tuple(item.strip() for item in value)
 
 
-def _status(record: dict[str, Any]) -> OpportunityStatus:
-    value = _text(record, ("status", "topicStatus", "callStatus"))
+def _status(document: SourceDocument, record: dict[str, Any]) -> OpportunityStatus:
+    if document.source_id == "portugal2030_annual_plan":
+        opening_aliases = (
+            "openingDate",
+            "startDate",
+            "data início prevista",
+            "data inicio prevista",
+            "data de início prevista",
+            "data de inicio prevista",
+            "metadata.startDate",
+        )
+        if _has_evidence(document, record, opening_aliases):
+            opening_date = _date(record, opening_aliases)
+            if opening_date is not None and opening_date.date() > document.retrieved_at.date():
+                return OpportunityStatus.UPCOMING
+        return OpportunityStatus.UNKNOWN
+
+    status_aliases = ("status", "topicStatus", "callStatus", "metadata.status")
+    value = (
+        _text(record, status_aliases) if _has_evidence(document, record, status_aliases) else None
+    )
     if value is None:
+        deadline_aliases = (
+            "deadline",
+            "deadlineDate",
+            "submissionDeadline",
+            "deadline-date",
+            "DD",
+            "data fim prevista",
+            "data de fim prevista",
+            "metadata.deadlineDate",
+            "metadata.esDA_endDate",
+        )
+        if document.source_id in {"ted_eu_procurement", "cinea_life"} and _has_evidence(
+            document, record, deadline_aliases
+        ):
+            deadline = _date(record, deadline_aliases)
+            if deadline is not None:
+                if deadline.date() < document.retrieved_at.date():
+                    return OpportunityStatus.CLOSED
+                if document.source_id == "ted_eu_procurement":
+                    return OpportunityStatus.OPEN
         return OpportunityStatus.UNKNOWN
     normalized = " ".join(value.casefold().split())
-    if normalized in {"open", "open for submission", "submission open", "ongoing"}:
+    if normalized in {
+        "open",
+        "open for submission",
+        "submission open",
+        "ongoing",
+        "aberto",
+        "aberta",
+        "sedia.global.openforsubmission",
+        "31094502",
+    }:
         return OpportunityStatus.OPEN
-    if normalized in {"forthcoming", "upcoming", "planned"}:
+    if normalized in {
+        "forthcoming",
+        "upcoming",
+        "planned",
+        "previsto",
+        "prevista",
+        "sedia.global.forthcoming",
+        "31094501",
+    }:
         return OpportunityStatus.UPCOMING
-    if normalized in {"closed", "closed for submission", "deadline passed"}:
+    if normalized in {
+        "closed",
+        "closed for submission",
+        "deadline passed",
+        "fechado",
+        "fechada",
+        "sedia.global.closed",
+        "31094503",
+    }:
         return OpportunityStatus.CLOSED
     return OpportunityStatus.UNKNOWN
 
 
 def _opportunity_type(record: dict[str, Any]) -> OpportunityType:
-    value = _text(record, ("opportunityType", "typeName", "fundingType", "type"))
+    value = _text(record, _OPPORTUNITY_TYPE_ALIASES)
     if value is None:
         return OpportunityType.UNKNOWN
     normalized = _key(value)
@@ -178,29 +427,78 @@ def _opportunity_type(record: dict[str, Any]) -> OpportunityType:
     return known.get(normalized, OpportunityType.UNKNOWN)
 
 
+def _funding_details_identity(url: str | None) -> tuple[str, str] | None:
+    if url is None:
+        return None
+    path = urlparse(url).path
+    match = re.search(r"/(topic|tender)-details/([^/]+)/?$", path, re.IGNORECASE)
+    if match is None:
+        return None
+    return match.group(1).casefold(), unquote(match.group(2))
+
+
+def _identifier_token(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _source_opportunity_type(
+    document: SourceDocument, record: dict[str, Any], canonical_url: str | None
+) -> OpportunityType:
+    if document.source_id == "ted_eu_procurement":
+        return OpportunityType.TENDER
+    has_type_evidence = _has_evidence(document, record, _OPPORTUNITY_TYPE_ALIASES)
+    if has_type_evidence:
+        value = _text(record, _OPPORTUNITY_TYPE_ALIASES)
+        if document.source_id == "eu_funding_tenders" and value in {"0", "1", "2", "8"}:
+            return OpportunityType.TENDER if value == "0" else OpportunityType.GRANT
+        normalized = _opportunity_type(record)
+        if normalized is not OpportunityType.UNKNOWN:
+            return normalized
+    if document.source_id == "eu_funding_tenders":
+        identity = _funding_details_identity(canonical_url)
+        if identity is not None:
+            return OpportunityType.TENDER if identity[0] == "tender" else OpportunityType.GRANT
+    return OpportunityType.UNKNOWN
+
+
 def _field_evidence(
     document: SourceDocument, raw_key: str, raw_value: Any
 ) -> EvidenceReference | None:
+    section = raw_key
+    if document.source_id == "portugal2030_annual_plan":
+        record_id = dict(document.metadata).get("record_id")
+        if not record_id:
+            record_id = hashlib.sha256(document.text.encode("utf-8")).hexdigest()[:16]
+        section = f"row {record_id}: {raw_key}"
     key_token = json.dumps(raw_key, ensure_ascii=False)
     key_start = document.text.find(key_token)
-    if key_start < 0:
-        return None
-    colon = document.text.find(":", key_start + len(key_token))
-    if colon < 0:
-        return None
-    value_start = colon + 1
-    while value_start < len(document.text) and document.text[value_start].isspace():
-        value_start += 1
-    try:
-        decoded, value_length = json.JSONDecoder().raw_decode(document.text[value_start:])
-    except json.JSONDecodeError:
-        return None
-    if decoded != raw_value or value_start - key_start > 4000:
-        return None
-    end = value_start + value_length
-    if end - key_start > 4000:
-        return None
-    return document.evidence(key_start, end, section=raw_key)
+    if key_start >= 0:
+        colon = document.text.find(":", key_start + len(key_token))
+        if colon >= 0:
+            value_start = colon + 1
+            while value_start < len(document.text) and document.text[value_start].isspace():
+                value_start += 1
+            try:
+                decoded, value_length = json.JSONDecoder().raw_decode(document.text[value_start:])
+            except json.JSONDecodeError:
+                decoded = None
+                value_length = 0
+            if (
+                decoded == raw_value
+                and value_start - key_start <= 4000
+                and value_start + value_length - key_start <= 4000
+            ):
+                return document.evidence(key_start, value_start + value_length, section=section)
+
+    if isinstance(raw_value, (str, int, float)) and not isinstance(raw_value, bool):
+        value = str(raw_value).strip()
+        if value:
+            pattern = r"\s+".join(re.escape(part) for part in value.split())
+            matches = tuple(re.finditer(pattern, document.text))
+            if len(matches) == 1:
+                match = matches[0]
+                return document.evidence(match.start(), match.end(), section=section)
+    return None
 
 
 def _has_evidence(
@@ -311,6 +609,53 @@ def _eligibility_rules(
     return tuple(rules)
 
 
+def _structured_eligibility_rules(
+    document: SourceDocument,
+    record: dict[str, Any],
+    evidence: tuple[EvidenceReference, ...],
+    existing_rules: tuple[EligibilityRule, ...],
+) -> tuple[EligibilityRule, ...]:
+    existing_fields = {item.profile_field for item in existing_rules}
+    available_evidence = {item.evidence_id for item in evidence}
+    rules: list[EligibilityRule] = []
+    for aliases, profile_field, criteria_label in (
+        (
+            _LIST_FIELDS["eligible_applicant_types"],
+            "applicant_types",
+            "as entidades beneficiárias",
+        ),
+        (_LIST_FIELDS["eligible_regions"], "regions", "as regiões de candidatura"),
+        (
+            _LIST_FIELDS["eligible_company_sizes"],
+            "company_size",
+            "as dimensões de empresa elegíveis",
+        ),
+    ):
+        found = _lookup(record, aliases)
+        if found is None or profile_field in existing_fields:
+            continue
+        source_evidence = _field_evidence(document, found[0], found[1])
+        expected = _strings(record, aliases)
+        if (
+            source_evidence is None
+            or source_evidence.evidence_id not in available_evidence
+            or not expected
+        ):
+            continue
+        expected_label = "; ".join(expected)
+        rules.append(
+            EligibilityRule(
+                rule_id=f"source-field-{profile_field}",
+                profile_field=profile_field,
+                operator=RuleOperator.INTERSECTS,
+                expected=expected,
+                reason=f"A fonte indica {criteria_label}: {expected_label}.",
+                evidence_ids=(source_evidence.evidence_id,),
+            )
+        )
+    return tuple(rules)
+
+
 def normalize_source_document(document: SourceDocument) -> Opportunity:
     """Map fields with known names and types; leave unsupported facts unknown."""
     record = _record(document)
@@ -319,11 +664,14 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     if not isinstance(record_id, str) or not record_id.strip():
         record_id = hashlib.sha256(document.text.encode("utf-8")).hexdigest()[:24]
 
-    call_id = (
-        _text(record, _FIELD_ALIASES["call_id"])
-        if _has_evidence(document, record, _FIELD_ALIASES["call_id"])
-        else None
-    )
+    if document.source_id == "cinea_life" and _has_evidence(document, record, ("agencyReference",)):
+        call_id = _text(record, ("agencyReference",))
+    else:
+        call_id = (
+            _text(record, _FIELD_ALIASES["call_id"])
+            if _has_evidence(document, record, _FIELD_ALIASES["call_id"])
+            else None
+        )
     programme = (
         _text(record, _FIELD_ALIASES["programme"])
         if _has_evidence(document, record, _FIELD_ALIASES["programme"])
@@ -342,11 +690,27 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
     evidence = []
     evidence_keys = (
         *_FIELD_ALIASES.values(),
-        ("status", "topicStatus", "callStatus"),
-        ("opportunityType", "typeName", "fundingType", "type"),
-        ("publicationDate", "publishedAt"),
-        ("openingDate", "startDate"),
-        ("deadline", "deadlineDate", "submissionDeadline"),
+        ("status", "topicStatus", "callStatus", "metadata.status"),
+        _OPPORTUNITY_TYPE_ALIASES,
+        ("publicationDate", "publishedAt", "publication-date", "PD"),
+        (
+            "openingDate",
+            "startDate",
+            "data início prevista",
+            "data inicio prevista",
+            "data de início prevista",
+            "data de inicio prevista",
+            "metadata.startDate",
+        ),
+        (
+            "deadline",
+            "deadlineDate",
+            "submissionDeadline",
+            "data fim prevista",
+            "data de fim prevista",
+            "metadata.esDA_endDate",
+            "metadata.deadlineDate",
+        ),
         ("additionalDeadlines", "submissionDeadlines"),
         ("sourceUpdatedAt", "updatedAt", "lastUpdated", "modificationDate"),
         ("trlMin", "technologyReadinessLevelMin"),
@@ -354,7 +718,17 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         ("eligibilityRules", "hardEligibilityRules"),
         *_LIST_FIELDS.values(),
         *_DECIMAL_FIELDS.values(),
-        ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink"),
+        (
+            "metadata.esIN_detailsUrl",
+            "metadata.url",
+            "url",
+            "webUrl",
+            "topicUrl",
+            "link",
+            "urlEN",
+            "permalink",
+            "notice-url",
+        ),
     )
     for aliases in evidence_keys:
         found = _lookup(record, aliases)
@@ -376,14 +750,92 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
                 evidence.append(reference)
 
     canonical_url: str | None = document.source_url
-    if (
+    if document.source_id == "portugal2030_annual_plan":
+        canonical_url = None
+    elif document.source_id == "cinea_life":
+        canonical_url = None
+        for link in document.discovered_links:
+            parsed_link = urlparse(link)
+            try:
+                port = parsed_link.port
+            except ValueError:
+                continue
+            if (
+                parsed_link.scheme == "https"
+                and parsed_link.hostname
+                and parsed_link.username is None
+                and parsed_link.password is None
+                and port in {None, 443}
+                and parsed_link.hostname.casefold().rstrip(".")
+                in {"cinea.ec.europa.eu", "ec.europa.eu"}
+            ):
+                canonical_url = link
+                break
+    elif document.source_id == "ted_eu_procurement":
+        canonical_url = document.source_url
+    elif (
         canonical_url is None
         or "/search-api/" in canonical_url
         or not _has_evidence(
-            document, record, ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
+            document,
+            record,
+            (
+                "metadata.esIN_detailsUrl",
+                "metadata.url",
+                "url",
+                "webUrl",
+                "topicUrl",
+                "link",
+                "urlEN",
+                "permalink",
+                "notice-url",
+            ),
         )
     ):
         canonical_url = None
+    topic_id = (
+        _text(record, _FIELD_ALIASES["topic_id"])
+        if _has_evidence(document, record, _FIELD_ALIASES["topic_id"])
+        else None
+    )
+    details_identity = (
+        _funding_details_identity(canonical_url)
+        if document.source_id == "eu_funding_tenders"
+        else None
+    )
+    source_identifier = None
+    if details_identity is not None:
+        for alias in (
+            "topicCode",
+            "topicId",
+            "metadata.topicCode",
+            "metadata.topicId",
+            "callIdentifier",
+            "callId",
+            "identifier",
+            "reference",
+            "metadata.REFERENCE",
+            "metadata.callIdentifier",
+            "metadata.identifier",
+            "metadata.callId",
+            "id",
+        ):
+            identifier = _text(record, (alias,))
+            if (
+                identifier is not None
+                and _has_evidence(document, record, (alias,))
+                and _identifier_token(identifier) == _identifier_token(details_identity[1])
+            ):
+                source_identifier = identifier
+                break
+    if source_identifier is not None:
+        call_id = source_identifier
+        if details_identity is not None and details_identity[0] == "topic":
+            topic_id = topic_id or source_identifier
+    elif document.source_id == "eu_funding_tenders":
+        call_id_field = _lookup(record, _FIELD_ALIASES["call_id"])
+        if call_id_field is not None and call_id_field[0] == "id":
+            call_id = None
     opportunity_id = hashlib.sha256(f"{document.source_id}\0{record_id}".encode()).hexdigest()[:24]
     normalized_fields: dict[str, Any] = {}
     for name, aliases in _LIST_FIELDS.items():
@@ -421,50 +873,101 @@ def normalize_source_document(document: SourceDocument) -> Opportunity:
         if _has_evidence(document, record, _FIELD_ALIASES["source_updated_at"])
         else None
     )
+    explicit_rules = _eligibility_rules(document, record)
+    structured_rules = _structured_eligibility_rules(
+        document, record, tuple(evidence), explicit_rules
+    )
     return Opportunity(
         id=f"opp-{opportunity_id}",
         source_id=document.source_id,
         source_record_id=record_id,
         programme=programme,
         call_id=call_id,
+        topic_id=topic_id,
         title=title,
         authority=authority,
         canonical_url=canonical_url,
-        status=(
-            _status(record)
-            if _has_evidence(document, record, ("status", "topicStatus", "callStatus"))
-            else OpportunityStatus.UNKNOWN
-        ),
-        opportunity_type=(
-            _opportunity_type(record)
-            if _has_evidence(
-                document, record, ("opportunityType", "typeName", "fundingType", "type")
-            )
-            else OpportunityType.UNKNOWN
-        ),
+        status=_status(document, record),
+        opportunity_type=_source_opportunity_type(document, record, canonical_url),
         publication_date=(
-            _date(record, ("publicationDate", "publishedAt"))
-            if _has_evidence(document, record, ("publicationDate", "publishedAt"))
+            _date(record, ("publicationDate", "publishedAt", "publication-date", "PD"))
+            if _has_evidence(
+                document, record, ("publicationDate", "publishedAt", "publication-date", "PD")
+            )
             else None
         ),
         opening_date=(
-            _date(record, ("openingDate", "startDate"))
-            if _has_evidence(document, record, ("openingDate", "startDate"))
+            _date(
+                record,
+                (
+                    "openingDate",
+                    "startDate",
+                    "data início prevista",
+                    "data inicio prevista",
+                    "data de início prevista",
+                    "data de inicio prevista",
+                    "metadata.startDate",
+                ),
+            )
+            if _has_evidence(
+                document,
+                record,
+                (
+                    "openingDate",
+                    "startDate",
+                    "data início prevista",
+                    "data inicio prevista",
+                    "data de início prevista",
+                    "data de inicio prevista",
+                    "metadata.startDate",
+                ),
+            )
             else None
         ),
         deadline=(
-            _date(record, ("deadline", "deadlineDate", "submissionDeadline"))
-            if _has_evidence(document, record, ("deadline", "deadlineDate", "submissionDeadline"))
+            _date(
+                record,
+                (
+                    "deadline",
+                    "deadlineDate",
+                    "submissionDeadline",
+                    "deadline-date",
+                    "DD",
+                    "data fim prevista",
+                    "data de fim prevista",
+                    "metadata.deadlineDate",
+                    "metadata.esDA_endDate",
+                ),
+            )
+            if _has_evidence(
+                document,
+                record,
+                (
+                    "deadline",
+                    "deadlineDate",
+                    "submissionDeadline",
+                    "deadline-date",
+                    "DD",
+                    "data fim prevista",
+                    "data de fim prevista",
+                    "metadata.deadlineDate",
+                    "metadata.esDA_endDate",
+                ),
+            )
             else None
         ),
         additional_deadlines=additional_deadlines,
         consortium_rules=consortium_rules,
         project_duration=project_duration,
-        eligibility_rules=_eligibility_rules(document, record),
+        eligibility_rules=(*explicit_rules, *structured_rules),
         source_updated_at=source_updated_at,
         source_retrieved_at=document.retrieved_at,
         last_checked_at=document.retrieved_at,
         raw_source_reference=document.source_url,
         evidence=tuple({item.evidence_id: item for item in evidence}.values()),
+        source_family=metadata.get("source_family"),
+        source_role=metadata.get("source_role"),
+        canonical_source=metadata.get("canonical_source"),
+        authority_relationship=metadata.get("authority_relationship"),
         **normalized_fields,
     )

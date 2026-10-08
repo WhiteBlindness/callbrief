@@ -2,62 +2,67 @@
   "schema_version": "0.2",
   "dataset": {
     "name": "Conjunto de avaliação do CallBrief",
-    "synthetic": true,
-    "official_calls_collected": false,
+    "synthetic": false,
+    "official_calls_collected": true,
     "real_call_human_labelled_sample": false,
-    "sample_size": 0,
-    "status": "not_measured",
+    "manual_reference_labels": true,
+    "independent_human_adjudication": false,
+    "sample_size": 30,
+    "checked_on": "2026-10-07",
+    "status": "manual_curated_provisional",
     "notes": [
-      "Os cenários incluídos são exemplos sintéticos para verificações repetíveis, não observações de avisos reais.",
-      "Não foram recolhidos 30 avisos oficiais.",
-      "Os alvos são metas de avaliação, não resultados medidos."
+      "Inclui 30 oportunidades reais consultadas em páginas oficiais de COMPETE 2030, Funding & Tenders e CINEA; os adaptadores não recolheram esta amostra.",
+      "Os rótulos e excertos foram preparados numa única passagem, sem validação independente por uma segunda pessoa.",
+      "Os 30 registos mantêm a proveniência MANUALLY_TRANSCRIBED e não foram recolhidos pelos adaptadores.",
+      "A avaliação contém 59 consultas: 19 para calibração e 40 para validação; a abstenção é calibrada apenas no subconjunto de desenvolvimento.",
+      "A matriz de reutilização é específica por fonte e por percurso; a redistribuição comercial fica desativada quando os termos não estão confirmados."
     ]
   },
   "metrics": [
     {
       "id": "enabled_official_source_adapters",
       "definition": "Número de adaptadores oficiais ativos no registo declarativo de fontes.",
-      "measured_value": 1,
+      "measured_value": 4,
       "status": "measured_registry_configuration",
-      "target": {"min": 6, "max": 8},
+      "target": {"min": 3},
       "requires_human_labels": false,
-      "measurement_note": "O valor conta o adaptador configurado. Não confirma uma consulta em direto nem recolha de avisos."
+      "measurement_note": "Quatro adaptadores oficiais estão ativos no registo: Funding & Tenders, TED, CINEA e XLSX do Plano Anual Portugal 2030. TED cobre contratação pública; o Plano Anual fornece apenas previsões. O estado do registo não equivale a uma validação de aquisição em direto."
     },
     {
       "id": "official_call_records_collected",
       "definition": "Número de avisos oficiais conservados numa amostra recolhida.",
-      "measured_value": 0,
-      "status": "measured",
+      "measured_value": 30,
+      "status": "measured_manual_curated",
       "target": {"min": 30},
       "requires_human_labels": false,
-      "measurement_note": "A base de avaliação não inclui avisos oficiais."
+      "measurement_note": "Trinta oportunidades reais, transcritas manualmente de páginas oficiais. Não foram recolhidas pelos adaptadores nem acompanhadas de respostas integrais arquivadas."
     },
     {
       "id": "normalization_available_field_accuracy",
       "definition": "Valores normalizados iguais divididos pelos campos disponíveis tanto no esperado como no observado. Valores ausentes ficam fora do cálculo.",
-      "measured_value": null,
-      "status": "not_measured",
+      "measured_value": {"available": 185, "correct": 185, "wrong": 0, "unknown": 0, "score": 1.0, "by_field": {"call_id": {"available": 30, "correct": 30}, "programme": {"available": 30, "correct": 30}, "title": {"available": 30, "correct": 30}, "status": {"available": 30, "correct": 30}, "publication_date": {"available": 5, "correct": 5}, "opening_date": {"available": 24, "correct": 24}, "deadline": {"available": 30, "correct": 30}, "deadline_datetime": {"available": 5, "correct": 5}, "budget_total": {"available": 1, "correct": 1}, "authority": {"available": 0, "correct": 0}, "opportunity_type": {"available": 0, "correct": 0}, "geography": {"available": 0, "correct": 0}, "beneficiary_type": {"available": 0, "correct": 0}}},
+      "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Exige uma amostra de campos de avisos normalizados e revistos por pessoas."
+      "measurement_note": "Campos disponíveis: 30 identificadores, programas, títulos e estados, cinco datas de publicação, 24 datas de abertura, 30 datas de prazo, cinco horas de prazo com fuso horário e um montante. Autoridade, tipo, geografia e tipo de beneficiário não têm rótulos neste corpus. Transcrição e avaliação numa passagem, sem adjudicação independente."
     },
     {
       "id": "recall_at_5",
       "definition": "Identificadores de avisos relevantes nos primeiros cinco resultados, divididos pelo total de identificadores relevantes anotados.",
-      "measured_value": null,
-      "status": "not_measured_on_real_calls",
+      "measured_value": {"baseline_recall_at_5": 0.9117647058823529, "current_recall_at_5": 0.9117647058823529, "baseline_mrr_at_5": 0.8774509803921569, "current_mrr_at_5": 0.8774509803921569, "answerable_queries": 34, "held_out_queries": 40, "development_queries": 19, "total_queries": 59},
+      "status": "measured_manual_single_pass",
       "target": 0.9,
       "requires_human_labels": true,
-      "measurement_note": "Exige avaliações humanas de relevância para cada consulta e aviso candidato. A comparação sintética separada está em evals/retrieval_benchmark.py."
+      "measurement_note": "Métricas de ordenação nas 34 consultas respondíveis do subconjunto de validação: 0,912 Recall@5 e 0,877 MRR@5, iguais à referência lexical anterior. A avaliação tem 59 consultas, com paráfrases, consultas bilingues e 12 consultas sem resposta repartidas entre calibração e validação. Rótulos manuais de passagem única, sem adjudicação independente."
     },
     {
       "id": "deduplication_precision",
       "definition": "Pares previstos como duplicados e confirmados, divididos por todos os pares previstos como duplicados.",
-      "measured_value": null,
-      "status": "not_measured",
+      "measured_value": {"predicted": 5, "correct": 5, "precision": 1.0, "recall": 1.0, "missed_duplicate_pairs": 0, "false_positive_pairs": 0, "labelled_pairs": 16, "positive_pairs": 5, "negative_pairs": 11, "real_corpus_negative_pairs": 10, "fixture_negative_pairs": 1, "automatic_merge_precision": 1.0, "automatic_merge_recall": 1.0, "automatic_merge_pairs": 5, "probable_review_candidates": 0, "possible_review_candidates": 0},
+      "status": "measured_manual_single_pass",
       "target": 0.95,
       "requires_human_labels": true,
-      "measurement_note": "Exige uma amostra revista por pessoas de pares do mesmo aviso e de avisos distintos."
+      "measurement_note": "Os cinco pares usam campos transcritos das páginas oficiais da CINEA e a ligação canónica para o Funding & Tenders; o lado Funding & Tenders é um registo de formato API criado a partir dessa ligação, não uma resposta capturada em direto. Dez pares negativos do corpus e um cenário anual controlado não foram unidos. Um teste de contrato percorre os cinco pares com respostas HTML e JSON de formato oficial. Rótulos de passagem única, sem adjudicação independente."
     },
     {
       "id": "deterministic_eligibility_accuracy",
@@ -71,11 +76,20 @@
     {
       "id": "citation_validity",
       "definition": "Identificadores de citações que apontam para evidência fornecida, divididos por todas as citações produzidas.",
-      "measured_value": null,
-      "status": "not_measured_on_application_output",
+      "measured_value": {"cited_facts": 185, "valid_exact_excerpt_spans": 185, "score": 1.0, "official_payload_hashes_missing": 30, "provenance_counts": {"MANUALLY_TRANSCRIBED": 185}},
+      "status": "measured_manual_excerpt_structure",
       "target": 1.0,
       "requires_human_labels": false,
-      "measurement_note": "O contrato rejeita citações inexistentes, mas ainda não foi avaliada uma amostra de resultados da aplicação."
+      "measurement_note": "Os 185 factos apontam para excertos estruturados e ligações registadas no corpus manual. Nenhum dos 30 registos de avaliação tem hash de resposta original; a proveniência não equivale a aquisição automática. As respostas das fontes ativas são agora resumidas com SHA-256 durante a verificação em direto, sem conservar corpos protegidos."
+    },
+    {
+      "id": "source_qualification_evidence",
+      "definition": "Condições específicas preservadas com excerto, URL oficial, localização e referência na evidência da oportunidade derivada.",
+      "measured_value": {"claims": 1, "valid_exact_excerpt_spans": 1, "preserved_on_opportunity": 1, "score": 1.0},
+      "status": "measured_local_evidence_structure",
+      "target": 1.0,
+      "requires_human_labels": false,
+      "measurement_note": "A condição de prorrogação do MPr-2026-6 aponta para o PDF oficial, página 1, e é anexada à evidência da oportunidade derivada. O corpo do PDF e o respetivo resumo criptográfico não foram arquivados; a medição valida a estrutura local, não a página original."
     },
     {
       "id": "multi_tenant_isolation",
@@ -103,6 +117,132 @@
       "target": 1.0,
       "requires_human_labels": true,
       "measurement_note": "Os testes determinísticos cobrem alterações sintéticas; falta um conjunto revisto de capturas reais."
+    },
+    {
+      "id": "retrieval_no_answer_false_positive_rate",
+      "definition": "Consultas sem avisos relevantes anotados que ainda recebem resultados, dividido por todas as consultas sem resposta.",
+      "measured_value": {"baseline_no_answer_precision": 0.5, "baseline_no_answer_recall": 0.16666666666666666, "current_no_answer_precision": 0.5555555555555556, "current_no_answer_recall": 0.8333333333333334, "current_no_answer_miss_rate": 0.16666666666666666, "answerable_abstention_rate": 0.11764705882352941, "held_out_no_answer_queries": 6, "total_no_answer_queries": 12, "confidence_threshold": 0.290165, "calibrated_on": "development partition only"},
+      "status": "measured_manual_single_pass",
+      "target": 0.0,
+      "requires_human_labels": true,
+      "measurement_note": "O limiar determinístico foi escolhido no subconjunto de desenvolvimento para maximizar a exactidão equilibrada. Nos seis casos sem resposta retidos para validação, a precisão da abstenção foi 0,556 e a sensibilidade 0,833; 11,8% das consultas respondíveis também foram recusadas. Os 12 casos sem resposta são um conjunto pequeno, com rótulos manuais."
+    },
+    {
+      "id": "live_source_check_success_count",
+      "definition": "Adaptadores de fonte validados por pedidos HTTP reais num executor alojado pelo GitHub.",
+      "measured_value": {
+        "success_count": 4,
+        "active_source_count": 4,
+        "selected_ref": "feat/live-funding-sources-v02",
+        "selected_sha": "2ed0fb90080290e5d380d5a817450fa87b6eebc3",
+        "workflow_run_url": "https://github.com/WhiteBlindness/callbrief/actions/runs/37701724994",
+        "live_corpus_records": 67,
+        "live_evidence_spans": 489,
+        "summary_artifact_only": true,
+        "live_deduplication": {
+          "pairs_compared": 140,
+          "exact_matches": 0,
+          "review_candidates": 0
+        },
+        "sources": [
+          {
+            "source_id": "eu_funding_tenders",
+            "http_status": 200,
+            "response_bytes": 2290184,
+            "rows_received": 20,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 4895.306
+          },
+          {
+            "source_id": "ted_eu_procurement",
+            "http_status": 200,
+            "response_bytes": 165791,
+            "rows_received": 20,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 1536.438
+          },
+          {
+            "source_id": "portugal2030_annual_plan",
+            "http_status": 200,
+            "response_bytes": 65667,
+            "rows_received": 177,
+            "rows_returned": 20,
+            "rows_accepted": 20,
+            "rows_rejected": 0,
+            "pagination_state": "more_available",
+            "schema_status": "valid",
+            "source_timestamp": "Mon, 14 Sep 2026 15:30:16 GMT",
+            "parser_result": "parsed",
+            "elapsed_ms": 996.502
+          },
+          {
+            "source_id": "cinea",
+            "http_status": 200,
+            "response_bytes": 739857,
+            "rows_received": 7,
+            "rows_returned": 7,
+            "rows_accepted": 7,
+            "rows_rejected": 0,
+            "pagination_state": "complete",
+            "schema_status": "valid",
+            "source_timestamp": null,
+            "parser_result": "parsed",
+            "elapsed_ms": 4508.814
+          }
+        ]
+      },
+      "status": "measured_github_hosted_live_run",
+      "target": {"min": 3},
+      "requires_human_labels": false,
+      "measurement_note": "Execução manual de 08/10/2026 ao commit indicado: os quatro percursos devolveram HTTP 200, esquema válido, registos aceites e análise concluída. A comparação de duplicados cobre apenas 140 pares da amostra de primeira página (7 CINEA x 20 Funding & Tenders) e não encontrou correspondências; não mede os cinco pares positivos rotulados. O corpus em direto e as 489 evidências foram mantidos no agente e só o resumo compacto foi enviado como artefacto."
+    },
+    {
+      "id": "source_supported_eligibility_examples",
+      "definition": "Exemplos em que campos explícitos do Plano Anual Portugal 2030 sustentam uma decisão determinística de tipo de entidade.",
+      "measured_value": {"eligible": 1, "ineligible": 2, "uncertain": 1, "remediable": 0, "profiles": 4, "source": "MANUALLY_TRANSCRIBED", "evidence_fields": ["Tipo Ent. Beneficiária", "NUTS II"]},
+      "status": "measured_manual_source_fields",
+      "target": {"evidence_required_for_each_decision": true},
+      "requires_human_labels": false,
+      "measurement_note": "A linha Formação Empresarial Individual declara entidade beneficiária Privada e região RAM. Um perfil privado na RAM cumpre as duas regras; um perfil público na RAM falha o tipo de entidade; um perfil privado no Alentejo falha a região; um perfil privado sem região permanece incerto. A fonte não dá base para classificar um caso como remediável. São previsões e não confirmação de abertura."
+    },
+    {
+      "id": "portugal2030_eligibility_field_normalization",
+      "definition": "Campos de tipo de entidade beneficiária e região normalizados a partir de linhas do Plano Anual e comparados com a transcrição de referência.",
+      "measured_value": {"eligible_applicant_types": {"available": 2, "correct": 2, "valid_exact_excerpt_spans": 2}, "eligible_regions": {"available": 2, "correct": 2, "valid_exact_excerpt_spans": 2}, "provenance": "MANUALLY_TRANSCRIBED"},
+      "status": "measured_manual_source_fields",
+      "target": 1.0,
+      "requires_human_labels": true,
+      "measurement_note": "Dois exemplos por campo, com excerto exato e ligação ao ficheiro. A página oficial agrupa estes filtros sob «Quem se pode candidatar?» e «Onde se pode candidatar?». Transcrição sem adjudicação independente; redistribuição comercial continua desativada."
+    },
+    {
+      "id": "source_format_change_tracking_contract",
+      "definition": "Deteção de alterações de prazo, estado e documentos entre duas capturas controladas no formato da fonte.",
+      "measured_value": {"fields_changed": ["deadline", "status", "documents"], "events_detected": 3, "source": "Funding & Tenders JSON fixtures"},
+      "status": "measured_controlled_fixture",
+      "target": 1.0,
+      "requires_human_labels": false,
+      "measurement_note": "Teste controlado com duas capturas em formato JSON da fonte; não representa alteração observada ao vivo."
+    },
+    {
+      "id": "agent_reach_contract",
+      "definition": "Verificação da interface de integração Agent-Reach para normalizar páginas oficiais em oportunidades CallBrief.",
+      "measured_value": {"contract_tests": "passed", "cloud_service_available": false},
+      "status": "contract_tested_local_smoke_pending",
+      "target": "owner local Agent-Reach bridge smoke test",
+      "requires_human_labels": false,
+      "measurement_note": "O serviço Agent-Reach não está disponível no ambiente de nuvem. O contrato é testado com um serviço falso; a integração local real continua pendente."
     },
     {
       "id": "synthetic_retrieval_recall_at_5",

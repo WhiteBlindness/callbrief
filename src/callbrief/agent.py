@@ -7,7 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from .corpus import Corpus, Evidence
+from .corpus import Corpus, Evidence, RetrievalStatus
 from .models import Brief, ModelValidationError, brief_from_payload
 from .provider import ModelReply
 
@@ -120,7 +120,9 @@ class AgentRunner:
                     "de submeter o resultado. Não inventes factos, datas ou critérios. Se a "
                     "evidência não confirmar um requisito, classifica-o como 'não confirmado'. "
                     "A adequação geral não equivale a elegibilidade legal. Cada afirmação "
-                    "factual deve citar evidence_ids devolvidos por search_documents. Usa apenas "
+                    "factual deve citar evidence_ids devolvidos por search_documents. Se a "
+                    "pesquisa indicar NO_SUPPORTED_RESULT, não uses passagens abaixo do limiar "
+                    "como evidência. Usa apenas "
                     "search_documents e submit_brief, uma ferramenta por turno. Responde em "
                     "português europeu."
                 ),
@@ -134,6 +136,7 @@ class AgentRunner:
         ]
         evidence_by_id: dict[str, Evidence] = {}
         used_tools: list[str] = []
+        no_supported_result_seen = False
 
         for turn in range(1, self.max_turns + 1):
             logger.info(
@@ -171,9 +174,12 @@ class AgentRunner:
                 ):
                     raise AgentError("search_documents arguments are invalid")
                 try:
-                    found = corpus.search(query, maximum)
+                    decision = corpus.search_decision(query, maximum)
+                    found = decision.evidence
                 except ValueError as exc:
                     raise AgentError(f"Document search failed: {exc}") from None
+                if decision.status is RetrievalStatus.NO_SUPPORTED_RESULT:
+                    no_supported_result_seen = True
                 evidence_by_id.update((item.evidence_id, item) for item in found)
                 messages.extend(
                     [
@@ -184,6 +190,9 @@ class AgentRunner:
                             "name": call.name,
                             "content": json.dumps(
                                 {
+                                    "status": decision.status.value,
+                                    "confidence": round(decision.confidence, 4),
+                                    "reason": decision.reason,
                                     "results": [
                                         {
                                             "evidence_id": item.evidence_id,
@@ -192,7 +201,7 @@ class AgentRunner:
                                             "excerpt": item.excerpt,
                                         }
                                         for item in found
-                                    ]
+                                    ],
                                 },
                                 ensure_ascii=False,
                             ),
@@ -205,7 +214,7 @@ class AgentRunner:
                 )
                 continue
 
-            if not evidence_by_id:
+            if not evidence_by_id and not no_supported_result_seen:
                 raise AgentError("A brief cannot be submitted before evidence search")
             if set(call.arguments) - {
                 "title",
@@ -223,6 +232,8 @@ class AgentRunner:
                 brief = brief_from_payload(call.arguments)
             except ModelValidationError as exc:
                 raise AgentError(f"Brief validation failed: {exc}") from None
+            if not evidence_by_id and brief.fit_band != "evidência insuficiente":
+                raise AgentError("Without supported evidence, the fit band must be insufficient")
             cited = set(brief.summary.evidence_ids) | set(brief.fit_rationale.evidence_ids)
             for requirement in brief.requirements:
                 cited.update(requirement.evidence_ids)

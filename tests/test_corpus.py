@@ -110,6 +110,23 @@ class CorpusTests(unittest.TestCase):
             self.assertEqual(len(results), 1)
             self.assertIn("I&D", results[0].excerpt)
 
+    def test_retrieval_expands_portuguese_connected_autonomous_mobility_terms(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "call.md").write_text(
+                (
+                    "Flagship-pilot demonstrations of Cooperative, Connected and "
+                    "Automated Mobility (CCAM)."
+                ),
+                encoding="utf-8",
+            )
+            corpus = Corpus.load(root)
+
+            results = corpus.search("testar veículos autónomos conectados", max_results=1)
+
+            self.assertEqual(len(results), 1)
+            self.assertGreater(results[0].term_coverage, 0.5)
+
     def test_retrieval_normalises_sme_phrases(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -122,6 +139,47 @@ class CorpusTests(unittest.TestCase):
 
             self.assertEqual(len(results), 1)
             self.assertIn("Small and medium enterprises", results[0].excerpt)
+
+    def test_search_decision_can_return_no_supported_result(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "call.md").write_text(
+                "Portugal funds business research and innovation projects.",
+                encoding="utf-8",
+            )
+            corpus = Corpus.load(root)
+
+            outcome = corpus.search_decision(
+                "grant for a lunar submarine orchestra",
+                max_results=5,
+                min_confidence=0.65,
+                min_term_coverage=0.3,
+            )
+
+            self.assertEqual(outcome.status, "no_supported_result")
+            self.assertEqual(outcome.evidence, ())
+            self.assertLess(outcome.confidence, 0.65)
+
+    def test_search_decision_keeps_supported_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "call.md").write_text(
+                "## Eligibility\n\nSmall and medium enterprises may receive funding "
+                "for applied research and innovation projects.",
+                encoding="utf-8",
+            )
+            corpus = Corpus.load(root)
+
+            outcome = corpus.search_decision(
+                "funding for applied research and innovation in SMEs",
+                max_results=5,
+                min_confidence=0.2,
+                min_term_coverage=0.25,
+            )
+
+            self.assertEqual(outcome.status, "supported")
+            self.assertTrue(outcome.evidence)
+            self.assertGreaterEqual(outcome.confidence, 0.2)
 
     def test_rejects_empty_or_unsupported_corpora(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

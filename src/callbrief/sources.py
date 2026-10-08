@@ -2,24 +2,60 @@
 
 from __future__ import annotations
 
+import hashlib
+import ipaddress
 import json
-from collections.abc import Callable, Mapping
+import posixpath
+import re
+import secrets
+import socket
+import ssl
+import unicodedata
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta, timezone
+from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import NotRequired, Protocol, TypedDict, runtime_checkable
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode, urlparse
+from urllib.parse import parse_qs, unquote, urlencode, urljoin, urlparse
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
+from zipfile import BadZipFile, ZipFile
 
-from .domain import SourceDocument
+from .domain import EvidenceProvenance, SourceDocument
 
 REGISTRY_PATH = Path(__file__).with_name("data") / "source_registry.json"
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024
+MAX_XLSX_XML_BYTES = 20 * 1024 * 1024
+MAX_XLSX_UNCOMPRESSED_BYTES = 40 * 1024 * 1024
+MAX_XLSX_ROWS = 10_000
+MAX_XLSX_COLUMNS = 256
+PORTUGAL2030_ANNUAL_PLAN_URL = (
+    "https://portugal2030.pt/wp-content/uploads/sites/3/2026/09/"
+    "PlanoAnualAvisos_download_140926-1.xlsx"
+)
+PORTUGAL2030_ANNUAL_PLAN_PAGE_URL = "https://portugal2030.pt/plano-anual-de-avisos/"
 
 
 class SourceError(RuntimeError):
     """Raised when an upstream source cannot provide a valid response."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        error_code: str = "source_error",
+        http_status: int | None = None,
+        response_bytes: int | None = None,
+        source_payload_sha256: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.error_code = error_code
+        self.http_status = http_status
+        self.response_bytes = response_bytes
+        self.source_payload_sha256 = source_payload_sha256
 
 
 @runtime_checkable
@@ -30,6 +66,58 @@ class SourceAdapter(Protocol):
     def source_id(self) -> str: ...
 
     def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]: ...
+
+
+@dataclass(frozen=True, slots=True)
+class HttpJsonResponse:
+    body: object
+    status_code: int
+    response_bytes: int
+    last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+
+
+@dataclass(frozen=True, slots=True)
+class HttpTextResponse:
+    body: str
+    status_code: int
+    response_bytes: int
+    last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+
+
+@dataclass(frozen=True, slots=True)
+class HttpBinaryResponse:
+    body: bytes
+    status_code: int
+    response_bytes: int
+    last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+
+
+@dataclass(frozen=True, slots=True)
+class SourceFetchResult:
+    source_id: str
+    documents: tuple[SourceDocument, ...]
+    http_status: int
+    response_bytes: int
+    total_results: int | None
+    pagination_state: str
+    rows_received: int = 0
+    rejected_rows: int = 0
+    response_schema_fields: tuple[str, ...] = ()
+    record_schema_fields: tuple[str, ...] = ()
+    record_field_types: tuple[tuple[str, str], ...] = ()
+    response_field_types: tuple[tuple[str, str], ...] = ()
+    response_array_lengths: tuple[tuple[str, int], ...] = ()
+    response_boolean_flags: tuple[tuple[str, bool], ...] = ()
+    rejection_reasons: tuple[tuple[str, int], ...] = ()
+    source_payload_sha256: str | None = None
+    source_timestamp: str | None = None
+    response_provenance_status: EvidenceProvenance | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +138,13 @@ class SourceDefinition:
     legal_notes: str
     last_verified: date | None
     adapter: str | None = None
+    legal_status: str = "policy_unverified"
+    commercial_redistribution: bool = False
+    source_family: str | None = None
+    source_role: str | None = None
+    canonical_source: str | None = None
+    authority_relationship: str | None = None
+    snapshot_policy: str = "hash_and_excerpt"
 
     def __post_init__(self) -> None:
         if not self.source_id or len(self.source_id) > 100:
@@ -96,6 +191,26 @@ class SourceDefinition:
             raise SourceError("Source last_verified must be a calendar date or unknown")
         if self.status == "active" and self.last_verified is None:
             raise SourceError("Active sources need a verification date")
+        if self.legal_status not in {
+            "documented_reuse",
+            "terms_need_confirmation",
+            "permission_required",
+            "license_unspecified",
+            "policy_unverified",
+        }:
+            raise SourceError(f"Unsupported source legal_status: {self.legal_status}")
+        if not isinstance(self.commercial_redistribution, bool):
+            raise SourceError("commercial_redistribution must be a boolean")
+        if self.commercial_redistribution and self.legal_status != "documented_reuse":
+            raise SourceError("Commercial redistribution needs documented reuse terms")
+        if self.source_role not in {None, "canonical", "discovery", "forecast", "publisher"}:
+            raise SourceError("Unsupported source role")
+        if self.snapshot_policy not in {"hash_and_excerpt", "bounded_normalized"}:
+            raise SourceError("Unsupported source snapshot policy")
+        for name in ("source_family", "canonical_source", "authority_relationship"):
+            value = getattr(self, name)
+            if value is not None and (not value.strip() or len(value) > 100):
+                raise SourceError(f"{name} must be a short non-empty string or unknown")
 
 
 def load_source_registry(path: Path = REGISTRY_PATH) -> tuple[SourceDefinition, ...]:
@@ -137,7 +252,58 @@ def load_source_registry(path: Path = REGISTRY_PATH) -> tuple[SourceDefinition, 
     return tuple(definitions)
 
 
+def _source_context_metadata(source_id: str) -> tuple[tuple[str, str], ...]:
+    registry_source_id = "cinea" if source_id == "cinea_life" else source_id
+    definition = next(
+        (item for item in load_source_registry() if item.source_id == registry_source_id), None
+    )
+    if definition is None:
+        return ()
+    values = (
+        ("source_family", definition.source_family),
+        ("source_role", definition.source_role),
+        ("canonical_source", definition.canonical_source),
+        ("authority_relationship", definition.authority_relationship),
+        ("snapshot_policy", definition.snapshot_policy),
+    )
+    return tuple((name, value) for name, value in values if value is not None)
+
+
 JsonTransport = Callable[[str, Mapping[str, str], Mapping[str, object], float], object]
+TextTransport = Callable[[str, float], object]
+BinaryTransport = Callable[[str, float], object]
+
+
+def _network_error_code(error: URLError | TimeoutError | OSError) -> str:
+    reason = error.reason if isinstance(error, URLError) else error
+    if isinstance(reason, ssl.SSLError):
+        return "network_tls"
+    if isinstance(reason, socket.gaierror):
+        return "network_dns"
+    if isinstance(reason, TimeoutError):
+        return "network_timeout"
+    if isinstance(reason, ConnectionResetError):
+        return "network_connection_reset"
+    if isinstance(reason, ConnectionRefusedError):
+        return "network_connection_refused"
+    if isinstance(reason, OSError) and reason.errno is not None:
+        return f"network_os_error_{reason.errno}"
+    return "network_request_failed"
+
+
+def _http_error_source_error(error: HTTPError) -> SourceError:
+    try:
+        body = error.read(MAX_RESPONSE_BYTES + 1)
+    except OSError:
+        body = b""
+    payload_hash = hashlib.sha256(body).hexdigest() if len(body) <= MAX_RESPONSE_BYTES else None
+    return SourceError(
+        f"Source API returned HTTP {error.code}",
+        error_code=f"http_{error.code}",
+        http_status=error.code,
+        response_bytes=len(body),
+        source_payload_sha256=payload_hash,
+    )
 
 
 def _post_json(
@@ -145,10 +311,11 @@ def _post_json(
     params: Mapping[str, str],
     payload: Mapping[str, object],
     timeout_seconds: float,
-) -> object:
+) -> HttpJsonResponse:
     """POST JSON to a public endpoint; kept replaceable for fixture tests."""
+    url = f"{endpoint}?{urlencode(params)}" if params else endpoint
     request = Request(
-        f"{endpoint}?{urlencode(params)}",
+        url,
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers={"Accept": "application/json", "Content-Type": "application/json"},
         method="POST",
@@ -156,44 +323,1175 @@ def _post_json(
     try:
         with urlopen(request, timeout=timeout_seconds) as response:
             body = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = int(getattr(response, "status", 200))
+            last_modified = response.headers.get("Last-Modified")
     except HTTPError as exc:
-        raise SourceError(f"Funding & Tenders API returned HTTP {exc.code}") from None
+        raise _http_error_source_error(exc) from None
     except (URLError, TimeoutError, OSError) as exc:
-        raise SourceError(f"Funding & Tenders API request failed: {type(exc).__name__}") from None
+        error_code = _network_error_code(exc)
+        raise SourceError(
+            f"Source API request failed: {error_code}", error_code=error_code
+        ) from None
     if len(body) > MAX_RESPONSE_BYTES:
-        raise SourceError("Funding & Tenders API response exceeds 5 MiB")
+        raise SourceError(
+            "Source API response exceeds 5 MiB",
+            error_code="response_too_large",
+            http_status=status_code,
+            response_bytes=len(body),
+        )
     try:
-        return json.loads(body.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise SourceError("Funding & Tenders API returned invalid JSON") from exc
+        value = json.loads(body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SourceError(
+            "Source API returned invalid JSON",
+            error_code="invalid_json",
+            http_status=status_code,
+            response_bytes=len(body),
+            source_payload_sha256=hashlib.sha256(body).hexdigest(),
+        ) from None
+    return HttpJsonResponse(
+        value,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
+
+
+def _post_multipart_form_json(
+    endpoint: str,
+    params: Mapping[str, str],
+    payload: Mapping[str, object],
+    timeout_seconds: float,
+) -> HttpJsonResponse:
+    """POST a JSON query value in the multipart form field expected by F&T."""
+    boundary = f"callbrief-{secrets.token_hex(16)}"
+    query = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    body = b"\r\n".join(
+        (
+            f"--{boundary}".encode("ascii"),
+            b'Content-Disposition: form-data; name="query"; filename="query.json"',
+            b"Content-Type: application/json; charset=utf-8",
+            b"",
+            query,
+            f"--{boundary}--".encode("ascii"),
+            b"",
+        )
+    )
+    url = f"{endpoint}?{urlencode(params)}" if params else endpoint
+    request = Request(
+        url,
+        data=body,
+        headers={
+            "Accept": "application/json",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            response_body = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = int(getattr(response, "status", 200))
+            last_modified = response.headers.get("Last-Modified")
+    except HTTPError as exc:
+        raise _http_error_source_error(exc) from None
+    except (URLError, TimeoutError, OSError) as exc:
+        error_code = _network_error_code(exc)
+        raise SourceError(
+            f"Source API request failed: {error_code}", error_code=error_code
+        ) from None
+    if len(response_body) > MAX_RESPONSE_BYTES:
+        raise SourceError(
+            "Source API response exceeds 5 MiB",
+            error_code="response_too_large",
+            http_status=status_code,
+            response_bytes=len(response_body),
+        )
+    try:
+        value = json.loads(response_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        raise SourceError(
+            "Source API returned invalid JSON",
+            error_code="invalid_json",
+            http_status=status_code,
+            response_bytes=len(response_body),
+            source_payload_sha256=hashlib.sha256(response_body).hexdigest(),
+        ) from None
+    return HttpJsonResponse(
+        value,
+        status_code,
+        len(response_body),
+        last_modified,
+        hashlib.sha256(response_body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
 
 
 def _result_rows(response: object) -> list[Mapping[str, object]]:
+    if isinstance(response, HttpJsonResponse):
+        response = response.body
     if isinstance(response, list):
         rows = response
     elif isinstance(response, dict):
-        rows = next((response[key] for key in ("results", "items", "data") if key in response), [])
+        result_key = next(
+            (key for key in ("results", "notices", "items", "data") if key in response),
+            None,
+        )
+        if result_key is None:
+            raise SourceError("Source API response is missing a recognized results list")
+        rows = response[result_key]
         if isinstance(rows, dict):
-            rows = rows.get("results", rows.get("items", []))
+            nested_key = next((key for key in ("results", "items") if key in rows), None)
+            if nested_key is None:
+                raise SourceError("Source API response has an invalid nested results wrapper")
+            rows = rows[nested_key]
     else:
-        raise SourceError("Funding & Tenders API returned an unexpected response")
+        raise SourceError("Source API returned an unexpected response")
     if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-        raise SourceError("Funding & Tenders API response has an invalid results list")
+        raise SourceError("Source API response has an invalid results list")
     return rows
 
 
-def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
-    content = row.get("content")
-    if isinstance(content, dict):
-        return {**row, **content}
-    if isinstance(content, str):
+def _safe_field_names(records: Iterable[Mapping[str, object]]) -> tuple[str, ...]:
+    """Return bounded field names only, without retaining or rendering source values."""
+    names = {
+        re.sub(r"[^A-Za-z0-9_.:-]", "_", name)[:64]
+        for record in records
+        for name in record
+        if isinstance(name, str)
+    }
+    return tuple(sorted(name for name in names if name)[:80])
+
+
+def _safe_record_field_types(
+    records: Iterable[Mapping[str, object]],
+) -> tuple[tuple[str, str], ...]:
+    """Return bounded field paths and value types without retaining source values."""
+    field_types: set[tuple[str, str]] = set()
+    for record in records:
+        for key, value in record.items():
+            if not isinstance(key, str):
+                continue
+            safe_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", key)[:64]
+            if not safe_key:
+                continue
+            field_types.add((safe_key, type(value).__name__))
+            if isinstance(value, Mapping):
+                for nested_key, nested_value in value.items():
+                    if not isinstance(nested_key, str):
+                        continue
+                    safe_nested_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", nested_key)[:64]
+                    if safe_nested_key:
+                        field_types.add(
+                            (f"{safe_key}.{safe_nested_key}"[:96], type(nested_value).__name__)
+                        )
+            elif isinstance(value, list) and value and isinstance(value[0], Mapping):
+                for nested_key, nested_value in value[0].items():
+                    if not isinstance(nested_key, str):
+                        continue
+                    safe_nested_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", nested_key)[:64]
+                    if safe_nested_key:
+                        field_types.add(
+                            (f"{safe_key}[].{safe_nested_key}"[:96], type(nested_value).__name__)
+                        )
+    return tuple(sorted(field_types)[:120])
+
+
+def _response_shape(
+    response: object,
+) -> tuple[tuple[tuple[str, str], ...], tuple[tuple[str, int], ...], tuple[tuple[str, bool], ...]]:
+    """Summarize JSON response structure without retaining source values."""
+    if isinstance(response, HttpJsonResponse):
+        response = response.body
+    if not isinstance(response, Mapping):
+        return (), (), ()
+    field_types: list[tuple[str, str]] = []
+    array_lengths: list[tuple[str, int]] = []
+    boolean_flags: list[tuple[str, bool]] = []
+    for key, value in response.items():
+        if not isinstance(key, str):
+            continue
+        safe_key = re.sub(r"[^A-Za-z0-9_.:-]", "_", key)[:64]
+        if not safe_key:
+            continue
+        field_types.append((safe_key, type(value).__name__))
+        if isinstance(value, list):
+            array_lengths.append((safe_key, len(value)))
+        if isinstance(value, bool):
+            boolean_flags.append((safe_key, value))
+    return (
+        tuple(sorted(field_types)[:80]),
+        tuple(sorted(array_lengths)[:80]),
+        tuple(sorted(boolean_flags)[:80]),
+    )
+
+
+def _total_results(response: object) -> int | None:
+    if isinstance(response, HttpJsonResponse):
+        response = response.body
+    if not isinstance(response, dict):
+        return None
+    for key in (
+        "totalResults",
+        "total",
+        "totalElements",
+        "numberOfResults",
+        "totalNoticeCount",
+        "totalSize",
+    ):
+        value = response.get(key)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            return value
+        if isinstance(value, str) and value.isascii() and value.isdecimal() and len(value) <= 18:
+            return int(value)
+    return None
+
+
+def _response_details(
+    response: object,
+) -> tuple[object, int, int, str | None, str | None, EvidenceProvenance]:
+    if isinstance(response, HttpJsonResponse):
+        return (
+            response.body,
+            response.status_code,
+            response.response_bytes,
+            response.last_modified,
+            response.source_payload_sha256,
+            response.provenance_status,
+        )
+    try:
+        response_bytes = len(json.dumps(response, ensure_ascii=False).encode("utf-8"))
+    except (TypeError, ValueError):
+        response_bytes = 0
+    return response, 200, response_bytes, None, None, EvidenceProvenance.CAPTURED_FIXTURE
+
+
+def _get_html(endpoint: str, timeout_seconds: float) -> HttpTextResponse:
+    """GET a bounded public HTML page and preserve its response metadata."""
+    request = Request(endpoint, headers={"Accept": "text/html"}, method="GET")
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = int(getattr(response, "status", 200))
+            last_modified = response.headers.get("Last-Modified")
+            content_type = response.headers.get_content_type()
+            charset = response.headers.get_content_charset() or "utf-8"
+    except HTTPError as exc:
+        raise SourceError(f"Source page returned HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError) as exc:
+        raise SourceError(f"Source page request failed: {type(exc).__name__}") from None
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise SourceError("Source page response exceeds 5 MiB")
+    if content_type != "text/html":
+        raise SourceError("Source page returned an unexpected content type")
+    try:
+        value = body.decode(charset)
+    except (LookupError, UnicodeDecodeError):
+        raise SourceError("Source page returned invalid text") from None
+    return HttpTextResponse(
+        value,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
+
+
+def _get_binary(endpoint: str, timeout_seconds: float) -> HttpBinaryResponse:
+    """GET a bounded official binary file and preserve response metadata."""
+    parsed_endpoint = urlparse(endpoint)
+    if parsed_endpoint.scheme != "https" or parsed_endpoint.hostname != "portugal2030.pt":
+        raise SourceError("Binary source URL must use the official Portugal 2030 host")
+    request = Request(
+        endpoint,
+        headers={
+            "Accept": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        },
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read(MAX_RESPONSE_BYTES + 1)
+            status_code = int(getattr(response, "status", 200))
+            last_modified = response.headers.get("Last-Modified")
+            content_type = response.headers.get_content_type()
+            final_url = urlparse(response.geturl())
+    except HTTPError as exc:
+        raise SourceError(f"Source file returned HTTP {exc.code}") from None
+    except (URLError, TimeoutError, OSError) as exc:
+        raise SourceError(f"Source file request failed: {type(exc).__name__}") from None
+    if (
+        final_url.scheme != "https"
+        or final_url.hostname != "portugal2030.pt"
+        or final_url.username
+        or final_url.password
+        or final_url.port not in {None, 443}
+    ):
+        raise SourceError("Source file redirected outside the official Portugal 2030 host")
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise SourceError("Source file response exceeds 5 MiB")
+    if content_type not in {
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/octet-stream",
+        "application/vnd.ms-excel",
+    }:
+        raise SourceError("Source file returned an unexpected content type")
+    return HttpBinaryResponse(
+        body,
+        status_code,
+        len(body),
+        last_modified,
+        hashlib.sha256(body).hexdigest(),
+        EvidenceProvenance.LIVE_SOURCE_VERIFIED,
+    )
+
+
+def _binary_response_details(response: object) -> HttpBinaryResponse:
+    if not isinstance(response, HttpBinaryResponse) or not isinstance(response.body, bytes):
+        raise SourceError("Source file returned an unexpected response")
+    if len(response.body) > MAX_RESPONSE_BYTES:
+        raise SourceError("Source file response exceeds 5 MiB")
+    return response
+
+
+_XLSX_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_XLSX_DOC_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+_XLSX_PACKAGE_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_ANNUAL_PLAN_RETAINED_HEADERS = {
+    "tipoentbeneficiaria",
+    "tipodeentidadebeneficiaria",
+    "naturezaaviso",
+    "objetivoespecifico",
+    "fundo",
+    "dotacaofundo",
+    "dotacaodofundo",
+    "datainicioprevista",
+    "datadeinicioprevista",
+    "datafimprevista",
+    "datadefimprevista",
+    "quadrimestre",
+    "nutsii",
+    "modalidadeapresentacaocandidatura",
+    "modalidadedeapresentacaodecandidatura",
+}
+
+
+def _xlsx_xml(archive: ZipFile, name: str) -> ElementTree.Element:
+    try:
+        info = archive.getinfo(name)
+    except KeyError as exc:
+        raise SourceError("Annual plan workbook is missing a required XML part") from exc
+    if info.file_size > MAX_XLSX_XML_BYTES:
+        raise SourceError("Annual plan workbook contains an oversized XML part")
+    try:
+        contents = archive.read(name)
+    except (BadZipFile, OSError, RuntimeError) as exc:
+        raise SourceError("Annual plan workbook contains an invalid ZIP member") from exc
+    try:
+        xml_text = contents.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise SourceError("Annual plan workbook XML must use UTF-8") from exc
+    if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", xml_text, re.IGNORECASE):
+        raise SourceError("Annual plan workbook XML cannot contain DTD or entity declarations")
+    try:
+        return ElementTree.fromstring(contents)
+    except ElementTree.ParseError as exc:
+        raise SourceError("Annual plan workbook contains malformed XML") from exc
+
+
+def _xlsx_sheet_path(archive: ZipFile) -> str:
+    names = set(archive.namelist())
+    if "xl/workbook.xml" not in names:
+        candidates = sorted(
+            name for name in names if re.fullmatch(r"xl/worksheets/sheet\d+\.xml", name)
+        )
+        if candidates:
+            return candidates[0]
+        raise SourceError("Annual plan workbook has no worksheet")
+
+    workbook = _xlsx_xml(archive, "xl/workbook.xml")
+    sheet = workbook.find(f"{_XLSX_NS}sheets/{_XLSX_NS}sheet")
+    if sheet is None:
+        raise SourceError("Annual plan workbook has no worksheet")
+    relationship_id = sheet.attrib.get(f"{_XLSX_DOC_REL_NS}id")
+    if not relationship_id:
+        raise SourceError("Annual plan workbook has an invalid worksheet reference")
+    relationships = _xlsx_xml(archive, "xl/_rels/workbook.xml.rels")
+    target = next(
+        (
+            item.attrib.get("Target")
+            for item in relationships.findall(f"{_XLSX_PACKAGE_REL_NS}Relationship")
+            if item.attrib.get("Id") == relationship_id
+        ),
+        None,
+    )
+    if not target:
+        raise SourceError("Annual plan workbook has a broken worksheet reference")
+    path = (
+        posixpath.normpath(target.lstrip("/"))
+        if target.startswith("/")
+        else posixpath.normpath(posixpath.join("xl", target))
+    )
+    if not path.startswith("xl/worksheets/") or path not in names:
+        raise SourceError("Annual plan workbook worksheet path is invalid")
+    return path
+
+
+def _xlsx_column_index(reference: str) -> int | None:
+    match = re.fullmatch(r"([A-Z]+)([1-9]\d*)", reference)
+    if not match:
+        return None
+    if int(match.group(2)) > 1_048_576:
+        raise SourceError("Annual plan worksheet row is outside the XLSX limit")
+    column = 0
+    for letter in match.group(1):
+        column = column * 26 + ord(letter) - ord("A") + 1
+    if column > 16_384:
+        raise SourceError("Annual plan worksheet column is outside the XLSX limit")
+    return column - 1
+
+
+def _xlsx_rows(payload: bytes) -> tuple[tuple[str, ...], ...]:
+    try:
+        archive = ZipFile(BytesIO(payload))
+    except (BadZipFile, OSError) as exc:
+        raise SourceError("Annual plan response is not a valid XLSX workbook") from exc
+    with archive:
+        infos = archive.infolist()
+        if len(infos) != len({info.filename for info in infos}):
+            raise SourceError("Annual plan workbook contains duplicate ZIP member names")
+        if any(info.flag_bits & 0x1 for info in infos):
+            raise SourceError("Encrypted annual plan workbooks are not supported")
+        if sum(info.file_size for info in infos) > MAX_XLSX_UNCOMPRESSED_BYTES:
+            raise SourceError("Annual plan workbook expands beyond the 40 MiB limit")
+        shared_strings: list[str] = []
+        if "xl/sharedStrings.xml" in archive.namelist():
+            shared_root = _xlsx_xml(archive, "xl/sharedStrings.xml")
+            shared_strings = [
+                "".join(part.text or "" for part in item.iter(f"{_XLSX_NS}t"))
+                for item in shared_root.findall(f"{_XLSX_NS}si")
+            ]
+
+        worksheet = _xlsx_xml(archive, _xlsx_sheet_path(archive))
+        sheet_data = worksheet.find(f"{_XLSX_NS}sheetData")
+        if sheet_data is None:
+            raise SourceError("Annual plan worksheet has no tabular data")
+        rows: list[tuple[str, ...]] = []
+        worksheet_rows = sheet_data.findall(f"{_XLSX_NS}row")
+        if len(worksheet_rows) > MAX_XLSX_ROWS:
+            raise SourceError("Annual plan worksheet exceeds the 10,000-row limit")
+        for row in worksheet_rows:
+            cells: dict[int, str] = {}
+            for cell in row.findall(f"{_XLSX_NS}c"):
+                reference = cell.attrib.get("r", "")
+                column_index = _xlsx_column_index(reference)
+                if column_index is None:
+                    continue
+                if column_index >= MAX_XLSX_COLUMNS:
+                    raise SourceError("Annual plan worksheet exceeds the 256-column limit")
+                cell_type = cell.attrib.get("t")
+                if cell_type == "inlineStr":
+                    inline = cell.find(f"{_XLSX_NS}is")
+                    value = (
+                        "".join(part.text or "" for part in inline.iter(f"{_XLSX_NS}t"))
+                        if inline is not None
+                        else ""
+                    )
+                else:
+                    value_element = cell.find(f"{_XLSX_NS}v")
+                    value = value_element.text or "" if value_element is not None else ""
+                    if cell_type == "s" and value:
+                        try:
+                            shared_index = int(value)
+                        except ValueError as exc:
+                            raise SourceError(
+                                "Annual plan workbook contains an invalid shared string index"
+                            ) from exc
+                        if not 0 <= shared_index < len(shared_strings):
+                            raise SourceError(
+                                "Annual plan workbook contains an invalid shared string index"
+                            )
+                        value = shared_strings[shared_index]
+                cells[column_index] = value
+            if cells:
+                rows.append(tuple(cells.get(index, "") for index in range(max(cells) + 1)))
+        if not rows:
+            raise SourceError("Annual plan worksheet has no rows")
+        return tuple(rows)
+
+
+def _xlsx_header_key(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value.casefold())
+    return "".join(
+        character
+        for character in normalized
+        if character.isalnum() and not unicodedata.combining(character)
+    )
+
+
+def _annual_plan_header_indexes(header: tuple[str, ...]) -> tuple[int, int, int]:
+    fields = {
+        "record_id": {
+            "id",
+            "idaviso",
+            "iddoaviso",
+            "codigoaviso",
+            "codigodoaviso",
+            "identificador",
+            "numeroaviso",
+            "numerodoaviso",
+        },
+        "title": {
+            "designacaodoaviso",
+            "designacao",
+            "nomedoaviso",
+        },
+        "programme": {"programa", "programafinanciador", "programaoperacional"},
+    }
+    normalized = [_xlsx_header_key(value) for value in header]
+    indexes: list[int] = []
+    for field in ("record_id", "title", "programme"):
+        found = next(
+            (index for index, value in enumerate(normalized) if value in fields[field]),
+            None,
+        )
+        if found is None:
+            raise SourceError("Annual plan worksheet is missing a required header")
+        indexes.append(found)
+    non_empty = [value for value in normalized if value]
+    if len(non_empty) != len(set(non_empty)):
+        raise SourceError("Annual plan worksheet contains duplicate column headers")
+    return indexes[0], indexes[1], indexes[2]
+
+
+def _html_response_details(
+    response: object,
+) -> tuple[str, int, int, str | None, str | None, EvidenceProvenance]:
+    if isinstance(response, HttpTextResponse):
+        return (
+            response.body,
+            response.status_code,
+            response.response_bytes,
+            response.last_modified,
+            response.source_payload_sha256,
+            response.provenance_status,
+        )
+    if not isinstance(response, str):
+        raise SourceError("Source page returned an unexpected response")
+    body = response.encode("utf-8")
+    return (
+        response,
+        200,
+        len(body),
+        None,
+        None,
+        EvidenceProvenance.CAPTURED_FIXTURE,
+    )
+
+
+def _source_metadata(total: int | None, returned: int, limit: int) -> tuple[tuple[str, str], ...]:
+    state = (
+        "more_available"
+        if total is not None and total > returned
+        else "limit_reached_unknown"
+        if returned == limit and total is None
+        else "complete"
+    )
+    return (
+        ("source_total_results", str(total) if total is not None else ""),
+        ("source_returned_results", str(returned)),
+        ("source_pagination_state", state),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class _HtmlAnchor:
+    href: str
+    text: str
+    start: int
+    end: int
+
+
+class _VisibleTextParser(HTMLParser):
+    """Retain visible text offsets and links from a small official listing page."""
+
+    _BLOCK_TAGS = frozenset({"br", "div", "li", "p", "h1", "h2", "h3", "section"})
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self._parts: list[str] = []
+        self._visible_length = 0
+        self._ends_with_newline = False
+        self.anchors: list[_HtmlAnchor] = []
+        self.headings: list[tuple[str, str]] = []
+        self._anchor_href: str | None = None
+        self._anchor_start = 0
+        self._anchor_parts: list[str] = []
+        self._heading_tag: str | None = None
+        self._heading_parts: list[str] = []
+
+    @property
+    def text(self) -> str:
+        return "".join(self._parts)
+
+    def _append(self, value: str) -> None:
+        self._parts.append(value)
+        self._visible_length += len(value)
+        self._ends_with_newline = value.endswith("\n") if value else self._ends_with_newline
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in self._BLOCK_TAGS and self._visible_length and not self._ends_with_newline:
+            self._append("\n")
+        if tag in {"h1", "h2", "h3"}:
+            self._heading_tag = tag
+            self._heading_parts = []
+        if tag == "a":
+            href = next((value for name, value in attrs if name == "href"), None)
+            if isinstance(href, str):
+                self._anchor_href = href
+                self._anchor_start = self._visible_length
+                self._anchor_parts = []
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a" and self._anchor_href is not None:
+            title = " ".join("".join(self._anchor_parts).split())
+            self.anchors.append(
+                _HtmlAnchor(self._anchor_href, title, self._anchor_start, self._visible_length)
+            )
+            self._anchor_href = None
+            self._anchor_parts = []
+        if tag == self._heading_tag and self._heading_tag is not None:
+            title = " ".join("".join(self._heading_parts).split())
+            self.headings.append((tag, title))
+            self._heading_tag = None
+            self._heading_parts = []
+        if tag in self._BLOCK_TAGS and self._visible_length and not self._ends_with_newline:
+            self._append("\n")
+
+    def handle_data(self, data: str) -> None:
+        self._append(data)
+        if self._anchor_href is not None:
+            self._anchor_parts.append(data)
+        if self._heading_tag is not None:
+            self._heading_parts.append(data)
+
+
+class _CineaDetailRecord(TypedDict):
+    record_id: str
+    agencyReference: str
+    topicCode: str
+    canonicalTopicId: str
+    identifierConflict: bool
+    callIdentifier: str
+    programme: str
+    programmeName: str
+    title: str
+    status: str
+    openingDate: str
+    deadlineDate: str
+    deadlineSource: str
+    authority: str
+    canonicalUrl: str
+    publicationDate: NotRequired[str]
+
+
+class CineaLifeAdapter:
+    """Extract LIFE call records and canonical links from CINEA's official pages."""
+
+    source_id = "cinea_life"
+    endpoint = "https://cinea.ec.europa.eu/life-calls-proposals-2026_en"
+    _DEADLINE = re.compile(r"Deadline\s+date\s*:\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE)
+    _DETAIL_DATE = re.compile(r"\b(\d{1,2}\s+[A-Za-z]+\s+\d{4})\b", re.IGNORECASE)
+    _DETAIL_DEADLINE_TIME = re.compile(
+        r"^\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})\s*,?\s*"
+        r"(\d{1,2}:\d{2})\s+\((CET|CEST)\)\s*$",
+        re.IGNORECASE,
+    )
+    _CALL_ID = re.compile(r"LIFE-\d{4}(?:-[A-Z0-9]+)+", re.IGNORECASE)
+    _TOPIC_URL = re.compile(
+        r"/opportunities/(?:topic-details|topic-details-tr)/([A-Z0-9-]+)", re.IGNORECASE
+    )
+    _MONTHS = {
+        "january": 1,
+        "february": 2,
+        "march": 3,
+        "april": 4,
+        "may": 5,
+        "june": 6,
+        "july": 7,
+        "august": 8,
+        "september": 9,
+        "october": 10,
+        "november": 11,
+        "december": 12,
+    }
+
+    def __init__(
+        self,
+        *,
+        transport: TextTransport = _get_html,
+        timeout_seconds: float = 20,
+    ) -> None:
+        if not 1 <= timeout_seconds <= 120:
+            raise ValueError("timeout_seconds must be between 1 and 120")
+        self._transport = transport
+        self.timeout_seconds = timeout_seconds
+
+    @classmethod
+    def _parse_deadline(cls, value: str) -> date | None:
+        parts = value.split()
+        if len(parts) != 3 or not parts[0].isdigit() or not parts[2].isdigit():
+            return None
+        month = cls._MONTHS.get(parts[1].casefold())
+        if month is None:
+            return None
         try:
-            decoded = json.loads(content)
+            return date(int(parts[2]), month, int(parts[0]))
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _official_link(base_url: str, href: str) -> str | None:
+        target = urljoin(base_url, href.strip())
+        parsed = urlparse(target)
+        hostname = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
+        if hostname == "safelinks.protection.outlook.com" or hostname.endswith(
+            ".safelinks.protection.outlook.com"
+        ):
+            wrapped_targets = {
+                key.casefold(): values for key, values in parse_qs(parsed.query).items()
+            }.get("url", [])
+            if not wrapped_targets:
+                return None
+            target = wrapped_targets[0]
+            parsed = urlparse(target)
+            hostname = parsed.hostname.casefold().rstrip(".") if parsed.hostname else ""
+        try:
+            port = parsed.port
+        except ValueError:
+            return None
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or port not in {None, 443}
+            or hostname not in {"cinea.ec.europa.eu", "ec.europa.eu"}
+        ):
+            return None
+        return target
+
+    @staticmethod
+    def _value_after_label(text: str, label: str) -> str | None:
+        lines = [line.strip() for line in text.splitlines()]
+        expected = label.casefold().rstrip(":")
+        for index, line in enumerate(lines[:-1]):
+            if line.casefold().rstrip(":") != expected:
+                continue
+            return next((value for value in lines[index + 1 :] if value), None)
+        return None
+
+    @classmethod
+    def _parse_detail(
+        cls, html: str, page_url: str, fallback_title: str
+    ) -> _CineaDetailRecord | None:
+        parser = _VisibleTextParser()
+        try:
+            parser.feed(html)
+            parser.close()
+        except (AssertionError, ValueError) as exc:
+            raise SourceError("CINEA detail page contains malformed HTML") from exc
+
+        reference = cls._value_after_label(parser.text, "Reference")
+        if reference is None or cls._CALL_ID.fullmatch(reference) is None:
+            return None
+        canonical_url = None
+        canonical_topic_id = None
+        for anchor in parser.anchors:
+            link = cls._official_link(page_url, anchor.href)
+            if link is None:
+                continue
+            parsed_link = urlparse(link)
+            topic_match = cls._TOPIC_URL.search(parsed_link.path)
+            if parsed_link.hostname == "ec.europa.eu" and topic_match is not None:
+                canonical_topic_id = topic_match.group(1).upper()
+                canonical_url = re.sub(r"(?:%20)+$", "", link.rstrip(), flags=re.IGNORECASE)
+                break
+        if canonical_url is None or canonical_topic_id is None:
+            return None
+
+        programme_name = cls._value_after_label(parser.text, "Funding programme")
+        if programme_name is None:
+            return None
+        programme_match = re.search(r"\(([A-Z][A-Z0-9]{1,10})\)\s*\(\d{4}/\d{4}\)", programme_name)
+        programme = programme_match.group(1) if programme_match else programme_name
+        title = next(
+            (value for tag, value in parser.headings if tag == "h1" and value),
+            fallback_title,
+        )
+        status = cls._value_after_label(parser.text, "Status")
+        publication = cls._value_after_label(parser.text, "Publication date")
+        opening = cls._value_after_label(parser.text, "Opening date")
+        deadline = cls._value_after_label(parser.text, "Deadline date")
+        publication_match = cls._DETAIL_DATE.search(publication or "")
+        opening_match = cls._DETAIL_DATE.search(opening or "")
+        deadline_match = cls._DETAIL_DATE.search(deadline or "")
+        if status is None or opening_match is None or deadline_match is None:
+            return None
+        deadline_source = (deadline or "").strip()
+        deadline_time_match = cls._DETAIL_DEADLINE_TIME.fullmatch(deadline_source)
+        has_deadline_time = re.search(r"\b\d{1,2}:\d{2}\b", deadline_source) is not None
+        if has_deadline_time and deadline_time_match is None:
+            return None
+        deadline_value = deadline_match.group(1)
+        if deadline_time_match is not None:
+            deadline_date, deadline_time, zone_name = deadline_time_match.groups()
+            utc_offset = timedelta(hours=2 if zone_name.casefold() == "cest" else 1)
+            try:
+                deadline_value = (
+                    datetime.strptime(f"{deadline_date} {deadline_time}", "%d %B %Y %H:%M")
+                    .replace(tzinfo=timezone(utc_offset))
+                    .isoformat()
+                )
+            except ValueError:
+                return None
+        record: _CineaDetailRecord = {
+            "record_id": reference,
+            "agencyReference": reference,
+            "topicCode": canonical_topic_id,
+            "canonicalTopicId": canonical_topic_id,
+            "identifierConflict": canonical_topic_id.casefold() != reference.casefold(),
+            "callIdentifier": reference,
+            "programme": programme,
+            "programmeName": programme_name,
+            "title": title[:300],
+            "status": status,
+            "openingDate": opening_match.group(1),
+            "deadlineDate": deadline_value,
+            "deadlineSource": deadline_source,
+            "authority": "European Climate, Infrastructure and Environment Executive Agency",
+            "canonicalUrl": canonical_url,
+        }
+        if publication_match is not None:
+            record["publicationDate"] = publication_match.group(1)
+        return record
+
+    def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
+        return self.fetch_with_report(query, limit=limit).documents
+
+    def fetch_with_report(self, query: str = "", *, limit: int = 50) -> SourceFetchResult:
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("query must be text no longer than 500 characters")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        response = self._transport(self.endpoint, self.timeout_seconds)
+        (
+            html,
+            http_status,
+            response_bytes,
+            listing_last_modified,
+            listing_hash,
+            listing_provenance,
+        ) = _html_response_details(response)
+        if not 200 <= http_status < 300:
+            raise SourceError(f"CINEA listing returned HTTP {http_status}")
+        parser = _VisibleTextParser()
+        try:
+            parser.feed(html)
+            parser.close()
+        except (AssertionError, ValueError) as exc:
+            raise SourceError("CINEA page contains malformed HTML") from exc
+        text = parser.text
+        candidates = [
+            anchor
+            for anchor in parser.anchors
+            if "standard action projects (saps)" in anchor.text.casefold()
+        ]
+        retrieved_at = datetime.now(UTC)
+        selected_query = query.strip().casefold()
+        documents: list[SourceDocument] = []
+        rejected = 0
+        rejection_reasons: dict[str, int] = {}
+        response_bytes_total = response_bytes
+        for index, anchor in enumerate(candidates):
+            context_end = candidates[index + 1].start if index + 1 < len(candidates) else len(text)
+            context = text[anchor.end : context_end]
+            match = self._DEADLINE.search(context)
+            detail_url = self._official_link(self.endpoint, anchor.href)
+            if match is None:
+                rejected += 1
+                rejection_reasons["missing_listing_deadline"] = (
+                    rejection_reasons.get("missing_listing_deadline", 0) + 1
+                )
+                continue
+            if detail_url is None:
+                rejected += 1
+                rejection_reasons["invalid_detail_url"] = (
+                    rejection_reasons.get("invalid_detail_url", 0) + 1
+                )
+                continue
+            due_date = self._parse_deadline(match.group(1))
+            if due_date is None:
+                rejected += 1
+                rejection_reasons["unparseable_listing_deadline"] = (
+                    rejection_reasons.get("unparseable_listing_deadline", 0) + 1
+                )
+                continue
+            title = anchor.text.strip()
+            searchable_text = f"{title} {match.group(1)} LIFE 2026".casefold()
+            if selected_query and selected_query not in searchable_text:
+                continue
+            detail_response = self._transport(detail_url, self.timeout_seconds)
+            (
+                detail_html,
+                detail_status,
+                detail_bytes,
+                detail_last_modified,
+                detail_hash,
+                detail_provenance,
+            ) = _html_response_details(detail_response)
+            if not 200 <= detail_status < 300:
+                raise SourceError(f"CINEA detail page returned HTTP {detail_status}")
+            response_bytes_total += detail_bytes
+            source_record = self._parse_detail(detail_html, detail_url, title)
+            if source_record is None:
+                rejected += 1
+                rejection_reasons["unrecognized_detail_page"] = (
+                    rejection_reasons.get("unrecognized_detail_page", 0) + 1
+                )
+                continue
+            record_id = f"CINEA-{hashlib.sha256(detail_url.encode('utf-8')).hexdigest()[:24]}"
+            source_record["record_id"] = record_id
+            source_record_text = json.dumps(
+                source_record, ensure_ascii=False, sort_keys=True, indent=2
+            )
+            documents.append(
+                SourceDocument(
+                    source_id=self.source_id,
+                    source_url=detail_url,
+                    retrieved_at=retrieved_at,
+                    content_type="text/html; charset=utf-8",
+                    title=source_record["title"],
+                    text=source_record_text,
+                    metadata=(
+                        ("record_id", record_id),
+                        ("reference", source_record["agencyReference"]),
+                        ("canonical_topic_id", source_record["canonicalTopicId"]),
+                        ("identifier_conflict", str(source_record["identifierConflict"]).lower()),
+                        *(_source_context_metadata(self.source_id)),
+                    ),
+                    discovered_links=(source_record["canonicalUrl"], detail_url),
+                    last_modified=detail_last_modified,
+                    provenance_status=detail_provenance,
+                    source_payload_sha256=detail_hash,
+                )
+            )
+            if len(documents) >= limit:
+                break
+        total = len(candidates) - rejected
+        pagination = dict(_source_metadata(total, len(documents), limit))["source_pagination_state"]
+        return SourceFetchResult(
+            self.source_id,
+            tuple(documents),
+            http_status,
+            response_bytes_total,
+            total,
+            pagination,
+            len(candidates),
+            rejected,
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
+            source_payload_sha256=listing_hash,
+            source_timestamp=listing_last_modified,
+            response_provenance_status=listing_provenance,
+        )
+
+
+def _first_text(record: Mapping[str, object], names: tuple[str, ...]) -> str | None:
+    normalized = {
+        "".join(char for char in key.casefold() if char.isalnum()): value
+        for key, value in record.items()
+    }
+    for name in names:
+        value = normalized.get("".join(char for char in name.casefold() if char.isalnum()))
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, int) and not isinstance(value, bool):
+            return str(value)
+    return None
+
+
+def _ted_title(record: Mapping[str, object]) -> tuple[str, str] | None:
+    """Return a supported TED title and its exact source field path."""
+    for name in ("notice-title", "title", "TI"):
+        value = record.get(name)
+        if isinstance(value, str) and value.strip():
+            return value.strip(), name
+        if not isinstance(value, Mapping):
+            continue
+        localized = sorted(
+            (language, text.strip())
+            for language, text in value.items()
+            if isinstance(language, str) and isinstance(text, str) and text.strip()
+        )
+        if not localized:
+            continue
+        by_language = dict(localized)
+        for language in ("eng", "por"):
+            if language in by_language:
+                return by_language[language], f"{name}.{language}"
+        language, text = localized[0]
+        return text, f"{name}.{language}"
+    return None
+
+
+def _funding_tenders_details_urls(record: Mapping[str, object]) -> tuple[str, ...]:
+    valid_urls: list[str] = []
+    for name in (
+        "metadata.esIN_detailsUrl",
+        "metadata.url",
+        "metadata.links",
+        "url",
+        "webUrl",
+        "topicUrl",
+        "link",
+        "urlEN",
+        "permalink",
+    ):
+        raw_value = record.get(name)
+        if isinstance(raw_value, str):
+            values = (raw_value,)
+        elif isinstance(raw_value, list):
+            values = tuple(raw_value[:16])
+        else:
+            continue
+        for value in values:
+            if not isinstance(value, str) or not value.startswith("https://"):
+                continue
+            parsed = urlparse(value)
+            try:
+                port = parsed.port
+            except ValueError:
+                continue
+            path = parsed.path.casefold().rstrip("/")
+            if (
+                parsed.scheme == "https"
+                and parsed.hostname
+                and parsed.hostname.casefold().rstrip(".") == "ec.europa.eu"
+                and parsed.username is None
+                and parsed.password is None
+                and port in {None, 443}
+                and re.fullmatch(
+                    r"/info/funding-tenders/opportunities/portal/screen/opportunities/"
+                    r"(?:topic|tender)-details/[^/]+",
+                    path,
+                )
+            ):
+                valid_urls.append(value)
+    return tuple(dict.fromkeys(valid_urls))
+
+
+def _funding_tenders_url_identifier(url: str) -> str | None:
+    parsed = urlparse(url)
+    match = re.search(r"/(?:topic|tender)-details/([^/]+)/?$", parsed.path, re.IGNORECASE)
+    return unquote(match.group(1)) if match is not None else None
+
+
+def _identifier_token(value: str) -> str:
+    return "".join(character for character in value.casefold() if character.isalnum())
+
+
+def _flatten_record(row: Mapping[str, object]) -> dict[str, object]:
+    direct_fields = {
+        "id",
+        "topicCode",
+        "callIdentifier",
+        "identifier",
+        "topicId",
+        "callId",
+        "reference",
+        "url",
+        "webUrl",
+        "topicUrl",
+        "link",
+        "urlEN",
+        "permalink",
+        "title",
+        "title_en",
+        "titleEN",
+        "name",
+        "subject",
+        "status",
+        "topicStatus",
+        "callStatus",
+        "programme",
+        "programmeName",
+        "frameworkProgramme",
+        "programName",
+        "openingDate",
+        "startDate",
+        "deadline",
+        "deadlineDate",
+        "submissionDeadline",
+        "publicationDate",
+        "publishedAt",
+        "sourceUpdatedAt",
+        "updatedAt",
+        "budgetTotal",
+        "totalBudget",
+        "callBudget",
+        "documents",
+        "documentsToProvide",
+        "type",
+        "typeName",
+        "opportunityType",
+        "fundingType",
+    }
+    record = {key: value for key, value in row.items() if key in direct_fields}
+
+    content_record: object = row.get("content")
+    if isinstance(content_record, str):
+        try:
+            content_record = json.loads(content_record)
         except json.JSONDecodeError:
-            return dict(row)
-        if isinstance(decoded, dict):
-            return {**row, **decoded}
-    return dict(row)
+            content_record = None
+    if isinstance(content_record, Mapping):
+        record.update(
+            (key, value)
+            for key, value in content_record.items()
+            if isinstance(key, str) and key in direct_fields and key not in record
+        )
+
+    metadata = row.get("metadata")
+    metadata_fields = (
+        "title",
+        "status",
+        "startDate",
+        "deadlineDate",
+        "frameworkProgramme",
+        "callIdentifier",
+        "identifier",
+        "topicCode",
+        "topicId",
+        "callId",
+        "url",
+        "links",
+        "type",
+        "esDA_endDate",
+        "esST_programmes",
+        "esIN_detailsUrl",
+        "REFERENCE",
+        "es_ContentType",
+    )
+    if isinstance(metadata, Mapping):
+        for key in metadata_fields:
+            value = metadata.get(key)
+            if isinstance(value, list) and len(value) == 1:
+                value = value[0]
+            if value is not None:
+                record[f"metadata.{key}"] = value
+    return record
 
 
 class FundingTendersAdapter:
@@ -201,11 +1499,13 @@ class FundingTendersAdapter:
 
     source_id = "eu_funding_tenders"
     endpoint = "https://api.tech.ec.europa.eu/search-api/prod/rest/search"
+    opportunity_type_codes = ("0", "1", "2", "8")
+    active_status_codes = ("31094501", "31094502", "31094503")
 
     def __init__(
         self,
         *,
-        transport: JsonTransport = _post_json,
+        transport: JsonTransport = _post_multipart_form_json,
         timeout_seconds: float = 20,
         api_key: str = "SEDIA",
     ) -> None:
@@ -218,44 +1518,183 @@ class FundingTendersAdapter:
         self.api_key = api_key
 
     def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
+        return self.fetch_with_report(query, limit=limit).documents
+
+    def fetch_with_report(self, query: str = "", *, limit: int = 50) -> SourceFetchResult:
         if not isinstance(query, str) or len(query) > 500:
             raise ValueError("query must be text no longer than 500 characters")
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
-        # The API uses a JSON query body and public URL parameters. The default
-        # query deliberately leaves filtering to its `text` parameter.
-        response = self._transport(
+        # The API expects this JSON object in a multipart form field named
+        # `query`; URL parameters alone do not apply these type and status filters.
+        transport_response = self._transport(
             self.endpoint,
             {
                 "apiKey": self.api_key,
-                "text": query.strip() or "*",
+                "text": query.strip() or "***",
                 "pageSize": str(limit),
+                "pageNumber": "1",
                 "language": "en",
             },
-            {"bool": {"must": []}},
+            {
+                "bool": {
+                    "must": [
+                        {"terms": {"type": list(self.opportunity_type_codes)}},
+                        {"terms": {"status": list(self.active_status_codes)}},
+                    ]
+                }
+            },
             self.timeout_seconds,
         )
+        (
+            response,
+            http_status,
+            response_bytes,
+            last_modified,
+            payload_hash,
+            provenance,
+        ) = _response_details(transport_response)
+        field_types, array_lengths, boolean_flags = _response_shape(response)
         retrieved_at = datetime.now(UTC)
+        try:
+            rows = _result_rows(response)
+            total = _total_results(response)
+        except SourceError as exc:
+            raise SourceError(
+                str(exc),
+                error_code=exc.error_code,
+                http_status=http_status,
+                response_bytes=response_bytes,
+                source_payload_sha256=payload_hash,
+            ) from exc
         documents: list[SourceDocument] = []
-        for row in _result_rows(response)[:limit]:
+        rejected = 0
+        record_field_names: set[str] = set()
+        record_field_types: set[tuple[str, str]] = set()
+        rejection_reasons: dict[str, int] = {}
+        for row in rows[:limit]:
+            diagnostic_views: list[Mapping[str, object]] = [row]
+            content_view: object = row.get("content")
+            if isinstance(content_view, str):
+                try:
+                    content_view = json.loads(content_view)
+                except json.JSONDecodeError:
+                    content_view = None
+            if isinstance(content_view, Mapping):
+                diagnostic_views.append(content_view)
+            record_field_names.update(_safe_field_names(diagnostic_views))
+            record_field_types.update(_safe_record_field_types(diagnostic_views))
             record = _flatten_record(row)
-            title = next(
+            title_value = next(
                 (
                     str(record[key]).strip()
-                    for key in ("title", "title_en", "titleEN", "name", "subject")
+                    for key in (
+                        "title",
+                        "metadata.title",
+                        "title_en",
+                        "titleEN",
+                        "name",
+                        "subject",
+                    )
                     if isinstance(record.get(key), str) and str(record[key]).strip()
                 ),
-                "EU funding opportunity",
-            )[:300]
-            record_id = str(record.get("id") or record.get("topicCode") or title)[:200]
-            url_keys = ("url", "webUrl", "topicUrl", "link", "urlEN", "permalink")
-            links = tuple(
-                dict.fromkeys(
-                    value
-                    for key in url_keys
-                    if isinstance((value := record.get(key)), str) and value.startswith("https://")
-                )
+                None,
             )
+            stable_id = _first_text(
+                record,
+                (
+                    "id",
+                    "topicCode",
+                    "topicId",
+                    "metadata.topicCode",
+                    "metadata.topicId",
+                    "callId",
+                    "metadata.callId",
+                    "reference",
+                    "metadata.REFERENCE",
+                    "identifier",
+                    "metadata.identifier",
+                    "callIdentifier",
+                    "metadata.callIdentifier",
+                ),
+            )
+            if stable_id is None:
+                rejected += 1
+                rejection_reasons["missing_stable_id"] = (
+                    rejection_reasons.get("missing_stable_id", 0) + 1
+                )
+                continue
+            if title_value is None:
+                rejected += 1
+                rejection_reasons["missing_supported_title"] = (
+                    rejection_reasons.get("missing_supported_title", 0) + 1
+                )
+                continue
+            source_type = _first_text(record, ("type", "metadata.type"))
+            if (
+                source_type is not None
+                and source_type.isdecimal()
+                and source_type not in self.opportunity_type_codes
+            ):
+                rejected += 1
+                rejection_reasons["unsupported_opportunity_type"] = (
+                    rejection_reasons.get("unsupported_opportunity_type", 0) + 1
+                )
+                continue
+            source_identifiers = tuple(
+                value
+                for name in (
+                    "topicCode",
+                    "topicId",
+                    "callIdentifier",
+                    "callId",
+                    "identifier",
+                    "reference",
+                    "metadata.REFERENCE",
+                    "metadata.callIdentifier",
+                    "metadata.identifier",
+                    "metadata.topicCode",
+                    "metadata.topicId",
+                    "metadata.callId",
+                    "id",
+                )
+                if isinstance((value := record.get(name)), str) and value.strip()
+            )
+            source_identifier_tokens = {_identifier_token(value) for value in source_identifiers}
+            details_urls = _funding_tenders_details_urls(record)
+            details_url = next(
+                (
+                    candidate
+                    for candidate in details_urls
+                    if (details_identifier := _funding_tenders_url_identifier(candidate))
+                    is not None
+                    and _identifier_token(details_identifier) in source_identifier_tokens
+                ),
+                None,
+            )
+            if details_urls and details_url is None:
+                rejected += 1
+                rejection_reasons["details_identifier_mismatch"] = (
+                    rejection_reasons.get("details_identifier_mismatch", 0) + 1
+                )
+                continue
+            if details_url is None:
+                api_call_identifier = _first_text(
+                    record,
+                    ("metadata.callIdentifier", "metadata.topicCode", "metadata.topicId"),
+                )
+                if api_call_identifier is None or source_type not in self.opportunity_type_codes:
+                    rejected += 1
+                    rejection_reasons["missing_canonical_details_url"] = (
+                        rejection_reasons.get("missing_canonical_details_url", 0) + 1
+                    )
+                    continue
+            title = title_value[:300]
+            canonical_record_id = (
+                _funding_tenders_url_identifier(details_url) if details_url is not None else None
+            )
+            record_id = (canonical_record_id or stable_id)[:200]
+            links = (details_url,) if details_url is not None else ()
             scalar_metadata = tuple(
                 (key, str(value)[:500])
                 for key, value in record.items()
@@ -264,31 +1703,461 @@ class FundingTendersAdapter:
             documents.append(
                 SourceDocument(
                     source_id=self.source_id,
-                    source_url=links[0] if links else self.endpoint,
+                    source_url=details_url or self.endpoint,
                     retrieved_at=retrieved_at,
                     content_type="application/json",
                     title=title,
                     text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
-                    metadata=(("record_id", record_id), *scalar_metadata[:99]),
+                    metadata=(
+                        ("record_id", record_id),
+                        *_source_metadata(total, min(len(rows), limit), limit),
+                        *scalar_metadata[:96],
+                        *_source_context_metadata(self.source_id),
+                    ),
                     discovered_links=links,
+                    last_modified=last_modified,
+                    provenance_status=provenance,
+                    source_payload_sha256=payload_hash,
                 )
             )
+        returned = len(documents)
+        pagination = dict(_source_metadata(total, returned, limit))["source_pagination_state"]
+        return SourceFetchResult(
+            self.source_id,
+            tuple(documents),
+            http_status,
+            response_bytes,
+            total,
+            pagination,
+            min(len(rows), limit),
+            rejected,
+            response_schema_fields=(
+                _safe_field_names((response,)) if isinstance(response, Mapping) else ()
+            ),
+            record_schema_fields=tuple(sorted(record_field_names)),
+            record_field_types=tuple(sorted(record_field_types)[:120]),
+            response_field_types=field_types,
+            response_array_lengths=array_lengths,
+            response_boolean_flags=boolean_flags,
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
+            source_payload_sha256=payload_hash,
+            source_timestamp=last_modified,
+            response_provenance_status=provenance,
+        )
+
+
+class TedSearchAdapter:
+    """Search published procurement notices through the public TED Search API."""
+
+    source_id = "ted_eu_procurement"
+    endpoint = "https://api.ted.europa.eu/v3/notices/search"
+    fields = (
+        "publication-number",
+        "notice-title",
+        "publication-date",
+        "deadline",
+        "buyer-name",
+        "buyer-country",
+        "place-of-performance",
+        "notice-type",
+    )
+
+    def __init__(
+        self,
+        *,
+        transport: JsonTransport = _post_json,
+        timeout_seconds: float = 20,
+    ) -> None:
+        if not 1 <= timeout_seconds <= 120:
+            raise ValueError("timeout_seconds must be between 1 and 120")
+        self._transport = transport
+        self.timeout_seconds = timeout_seconds
+
+    def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
+        return self.fetch_with_report(query, limit=limit).documents
+
+    def fetch_with_report(self, query: str = "", *, limit: int = 50) -> SourceFetchResult:
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("query must be text no longer than 500 characters")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        cutoff_date = datetime.now(UTC).date() - timedelta(days=365)
+        cutoff = cutoff_date.strftime("%Y%m%d")
+        selected_query = query.strip() or f"publication-date >= {cutoff}"
+        transport_response = self._transport(
+            self.endpoint,
+            {},
+            {
+                "query": selected_query,
+                "fields": list(self.fields),
+                "page": 1,
+                "limit": limit,
+                "scope": "ACTIVE",
+                "paginationMode": "PAGE_NUMBER",
+                "checkQuerySyntax": False,
+            },
+            self.timeout_seconds,
+        )
+        (
+            response,
+            http_status,
+            response_bytes,
+            last_modified,
+            payload_hash,
+            provenance,
+        ) = _response_details(transport_response)
+        field_types, array_lengths, boolean_flags = _response_shape(response)
+        retrieved_at = datetime.now(UTC)
+        try:
+            rows = _result_rows(response)
+            total = _total_results(response)
+        except SourceError as exc:
+            raise SourceError(
+                str(exc),
+                error_code=exc.error_code,
+                http_status=http_status,
+                response_bytes=response_bytes,
+                source_payload_sha256=payload_hash,
+            ) from exc
+        documents: list[SourceDocument] = []
+        rejected = 0
+        rejection_reasons: dict[str, int] = {}
+        record_field_types: set[tuple[str, str]] = set()
+        for row in rows[:limit]:
+            record_field_types.update(_safe_record_field_types((row,)))
+            record_id = _first_text(row, ("publication-number", "notice-identifier", "ND", "id"))
+            if record_id is None:
+                rejected += 1
+                rejection_reasons["missing_publication_number"] = (
+                    rejection_reasons.get("missing_publication_number", 0) + 1
+                )
+                continue
+            selected_title = _ted_title(row)
+            if selected_title is None:
+                rejected += 1
+                rejection_reasons["missing_supported_title"] = (
+                    rejection_reasons.get("missing_supported_title", 0) + 1
+                )
+                continue
+            title, title_field = selected_title
+            canonical = f"https://ted.europa.eu/en/notice/-/detail/{record_id}"
+            links = tuple(
+                dict.fromkeys(
+                    value
+                    for key in ("url", "notice-url", "webUrl")
+                    if isinstance((value := row.get(key)), str) and value.startswith("https://")
+                )
+            ) or (canonical,)
+            record = dict(row)
+            for field in ("notice-title", "title", "TI"):
+                if isinstance(record.get(field), Mapping):
+                    record.pop(field)
+            record[title_field] = title
+            snapshot_candidate = json.dumps(
+                record,
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            normalized_snapshot = None
+            if (
+                dict(_source_context_metadata(self.source_id)).get("snapshot_policy")
+                == "bounded_normalized"
+                and len(snapshot_candidate.encode("utf-8")) <= 16 * 1024
+            ):
+                normalized_snapshot = snapshot_candidate
+            documents.append(
+                SourceDocument(
+                    source_id=self.source_id,
+                    source_url=links[0],
+                    retrieved_at=retrieved_at,
+                    content_type="application/json",
+                    title=title[:300],
+                    text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                    metadata=(
+                        ("record_id", record_id),
+                        *_source_metadata(total, min(len(rows), limit), limit),
+                        ("publication_number", record_id),
+                        *_source_context_metadata(self.source_id),
+                    ),
+                    discovered_links=links,
+                    last_modified=last_modified,
+                    provenance_status=provenance,
+                    source_payload_sha256=payload_hash,
+                    normalized_snapshot=normalized_snapshot,
+                )
+            )
+        pagination = dict(_source_metadata(total, len(documents), limit))["source_pagination_state"]
+        return SourceFetchResult(
+            self.source_id,
+            tuple(documents),
+            http_status,
+            response_bytes,
+            total,
+            pagination,
+            min(len(rows), limit),
+            rejected,
+            response_schema_fields=(
+                _safe_field_names((response,)) if isinstance(response, Mapping) else ()
+            ),
+            record_schema_fields=_safe_field_names(rows),
+            record_field_types=tuple(sorted(record_field_types)[:120]),
+            response_field_types=field_types,
+            response_array_lengths=array_lengths,
+            response_boolean_flags=boolean_flags,
+            rejection_reasons=tuple(sorted(rejection_reasons.items())),
+            source_payload_sha256=payload_hash,
+            source_timestamp=last_modified,
+            response_provenance_status=provenance,
+        )
+
+
+class Portugal2030AnnualPlanAdapter:
+    """Read forecast rows from the official Portugal 2030 annual-plan workbook."""
+
+    source_id = "portugal2030_annual_plan"
+    endpoint = PORTUGAL2030_ANNUAL_PLAN_URL
+    listing_url = PORTUGAL2030_ANNUAL_PLAN_PAGE_URL
+
+    def __init__(
+        self,
+        *,
+        transport: BinaryTransport = _get_binary,
+        timeout_seconds: float = 20,
+    ) -> None:
+        if not 1 <= timeout_seconds <= 120:
+            raise ValueError("timeout_seconds must be between 1 and 120")
+        self._transport = transport
+        self.timeout_seconds = timeout_seconds
+
+    def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
+        return self.fetch_with_report(query, limit=limit).documents
+
+    def fetch_with_report(self, query: str = "", *, limit: int = 50) -> SourceFetchResult:
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("query must be text no longer than 500 characters")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        response = _binary_response_details(self._transport(self.endpoint, self.timeout_seconds))
+        rows = _xlsx_rows(response.body)
+        header_position: int | None = None
+        header_indexes: tuple[int, int, int] | None = None
+        for index, row in enumerate(rows):
+            try:
+                candidate_indexes = _annual_plan_header_indexes(row)
+            except SourceError:
+                continue
+            header_position = index
+            header_indexes = candidate_indexes
+            header = row
+            break
+        if header_position is None or header_indexes is None:
+            raise SourceError("Annual plan workbook has no recognized header row")
+
+        title_index, programme_index, record_id_index = (
+            header_indexes[1],
+            header_indexes[2],
+            header_indexes[0],
+        )
+        retrieved_at = datetime.now(UTC)
+        workbook_hash = hashlib.sha256(response.body).hexdigest()
+        received_rows = 0
+        rejected_rows = 0
+        matched_rows: list[tuple[str, str, dict[str, str]]] = []
+        query_terms = tuple(term for term in query.casefold().split() if term)
+        for row in rows[header_position + 1 :]:
+            if not any(value.strip() for value in row):
+                continue
+            received_rows += 1
+            raw_record = {
+                column: row[index] if index < len(row) else ""
+                for index, column in enumerate(header)
+                if column.strip()
+            }
+            record_id = raw_record.get(header[record_id_index], "").strip()
+            title = raw_record.get(header[title_index], "").strip()
+            programme = raw_record.get(header[programme_index], "").strip()
+            if not record_id or not title or not programme:
+                rejected_rows += 1
+                continue
+            search_text = " ".join((title, programme, *raw_record.values())).casefold()
+            if query_terms and not all(term in search_text for term in query_terms):
+                continue
+            retained_headers = _ANNUAL_PLAN_RETAINED_HEADERS | {
+                _xlsx_header_key(header[record_id_index]),
+                _xlsx_header_key(header[title_index]),
+                _xlsx_header_key(header[programme_index]),
+            }
+            record = {
+                name: value
+                for name, value in raw_record.items()
+                if _xlsx_header_key(name) in retained_headers
+            }
+            matched_rows.append((record_id, title, record))
+
+        documents = tuple(
+            SourceDocument(
+                source_id=self.source_id,
+                source_url=self.endpoint,
+                retrieved_at=retrieved_at,
+                content_type=("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+                title=title[:300],
+                text=json.dumps(record, ensure_ascii=False, sort_keys=True, indent=2),
+                metadata=(
+                    ("record_id", record_id),
+                    ("source_payload_sha256", workbook_hash),
+                    ("forecast_only", "true"),
+                    *_source_context_metadata(self.source_id),
+                ),
+                discovered_links=(self.listing_url,),
+                last_modified=response.last_modified,
+                provenance_status=response.provenance_status,
+                source_payload_sha256=workbook_hash,
+            )
+            for record_id, title, record in matched_rows[:limit]
+        )
+        total = len(matched_rows)
+        pagination = "more_available" if total > len(documents) else "complete"
+        return SourceFetchResult(
+            self.source_id,
+            documents,
+            response.status_code,
+            response.response_bytes,
+            total,
+            pagination,
+            received_rows,
+            rejected_rows,
+            source_payload_sha256=response.source_payload_sha256,
+            source_timestamp=response.last_modified,
+            response_provenance_status=response.provenance_status,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AgentReachPage:
+    """Small bridge payload for page results supplied by an Agent-Reach host tool."""
+
+    url: str
+    title: str
+    text: str
+    content_type: str = "text/plain"
+    links: tuple[str, ...] = ()
+    metadata: tuple[tuple[str, str], ...] = ()
+    retrieved_at: datetime | None = None
+    etag: str | None = None
+    last_modified: str | None = None
+    source_payload_sha256: str | None = None
+    provenance_status: EvidenceProvenance = EvidenceProvenance.CAPTURED_FIXTURE
+
+
+class AgentReachBridge(Protocol):
+    """Host-owned bridge contract; Agent-Reach internals stay outside CallBrief."""
+
+    def fetch(self, query: str, *, limit: int) -> Iterable[AgentReachPage]: ...
+
+
+class AgentReachSourceAdapter:
+    """Map approved Agent-Reach page results to CallBrief source documents."""
+
+    source_id = "agent_reach"
+
+    def __init__(self, bridge: AgentReachBridge, *, allowed_hosts: Iterable[str]) -> None:
+        hosts = tuple(dict.fromkeys(host.casefold().strip(".") for host in allowed_hosts))
+        if not hosts or any(not host for host in hosts):
+            raise ValueError("allowed_hosts must contain at least one official hostname")
+        self._bridge = bridge
+        self._allowed_hosts = hosts
+
+    def _approved_url(self, url: str) -> bool:
+        parsed = urlparse(url)
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
+            return False
+        hostname = parsed.hostname.casefold().rstrip(".")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            address = None
+        if address is not None and not address.is_global:
+            return False
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        if port not in {None, 443}:
+            return False
+        return any(
+            hostname == host or hostname.endswith(f".{host}") for host in self._allowed_hosts
+        )
+
+    def fetch(self, query: str = "", *, limit: int = 50) -> tuple[SourceDocument, ...]:
+        if not isinstance(query, str) or len(query) > 500:
+            raise ValueError("query must be text no longer than 500 characters")
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        documents: list[SourceDocument] = []
+        for page in self._bridge.fetch(query.strip(), limit=limit):
+            if not isinstance(page, AgentReachPage) or not self._approved_url(page.url):
+                continue
+            links = tuple(link for link in page.links if self._approved_url(link))
+            documents.append(
+                SourceDocument(
+                    source_id=self.source_id,
+                    source_url=page.url,
+                    retrieved_at=page.retrieved_at or datetime.now(UTC),
+                    content_type=page.content_type,
+                    title=page.title,
+                    text=page.text,
+                    metadata=page.metadata,
+                    discovered_links=links,
+                    etag=page.etag,
+                    last_modified=page.last_modified,
+                    source_payload_sha256=page.source_payload_sha256,
+                    provenance_status=page.provenance_status,
+                )
+            )
+            if len(documents) >= limit:
+                break
         return tuple(documents)
 
 
 def create_adapter_registry(
     *,
-    transport: JsonTransport = _post_json,
+    transport: JsonTransport | None = None,
+    html_transport: TextTransport | None = None,
+    binary_transport: BinaryTransport | None = None,
     agent_reach_adapter: SourceAdapter | None = None,
+    agent_reach_bridge: AgentReachBridge | None = None,
+    agent_reach_allowed_hosts: Iterable[str] = (),
 ) -> dict[str, SourceAdapter]:
     """Construct registered adapters and optionally attach a host integration."""
+    funding_tenders_transport = transport if transport is not None else _post_multipart_form_json
+    ted_transport = transport if transport is not None else _post_json
     adapters: dict[str, SourceAdapter] = {
-        definition.source_id: FundingTendersAdapter(transport=transport)
+        definition.source_id: (
+            FundingTendersAdapter(transport=funding_tenders_transport)
+            if definition.adapter == "funding_tenders"
+            else TedSearchAdapter(transport=ted_transport)
+            if definition.adapter == "ted_search"
+            else Portugal2030AnnualPlanAdapter(transport=binary_transport or _get_binary)
+            if definition.adapter == "portugal2030_annual_plan_xlsx"
+            else CineaLifeAdapter(transport=html_transport or _get_html)
+        )
         for definition in load_source_registry()
         if definition.enabled
         and definition.status == "active"
-        and definition.adapter == "funding_tenders"
+        and definition.adapter
+        in {
+            "funding_tenders",
+            "ted_search",
+            "cinea_life_html",
+            "portugal2030_annual_plan_xlsx",
+        }
     }
+    if agent_reach_bridge is not None:
+        adapters["agent_reach"] = AgentReachSourceAdapter(
+            agent_reach_bridge,
+            allowed_hosts=agent_reach_allowed_hosts,
+        )
     if agent_reach_adapter is not None:
         if not isinstance(agent_reach_adapter, SourceAdapter):
             raise TypeError("agent_reach_adapter must implement SourceAdapter")
